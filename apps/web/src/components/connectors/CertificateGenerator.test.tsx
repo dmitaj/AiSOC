@@ -182,6 +182,10 @@ describe("OAuth app form: Generate certificate", () => {
     );
     fireEvent.change(screen.getByPlaceholderText("client_xxxxxxxx"), { target: { value: "cid" } });
     fireEvent.click(screen.getByRole("radio", { name: "Certificate" }));
+    const generateButton = screen.getByRole("button", { name: "Generate certificate" });
+    expect(generateButton).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Entra tenant ID"), { target: { value: "common" } });
+    expect(generateButton).toBeDisabled();
     fireEvent.change(screen.getByLabelText("Entra tenant ID"), {
       target: { value: "contoso.onmicrosoft.com" },
     });

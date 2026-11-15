@@ -61,6 +61,13 @@ export function CertificateGenerator({
   const [objectId, setObjectId] = useState("");
   const [tenant, setTenant] = useState("");
   const askTenant = entraTenantId === undefined;
+  // Rotation signs in to the app's own tenant; without it a generated cert can't auto-rotate.
+  // Same rule as the API's valid_tenant(): a GUID or verified domain, not a multi-tenant alias.
+  const tenantValue = tenant.trim();
+  const tenantMissing =
+    askTenant &&
+    (!/^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$/.test(tenantValue) ||
+      ["common", "organizations", "consumers"].includes(tenantValue.toLowerCase()));
 
   const generate = async () => {
     setBusy(true);
@@ -129,7 +136,7 @@ export function CertificateGenerator({
             aria-label="Entra tenant ID"
             value={tenant}
             onChange={(e) => setTenant(e.target.value)}
-            placeholder="Entra tenant ID (for rotation)"
+            placeholder="Entra tenant ID (required for auto-rotation)"
             className={inputClass}
           />
         )}
@@ -148,7 +155,7 @@ export function CertificateGenerator({
       <button
         type="button"
         onClick={generate}
-        disabled={busy}
+        disabled={busy || tenantMissing}
         className="rounded-md bg-blue-600 px-3 py-1.5 font-semibold text-white hover:bg-blue-500 disabled:opacity-50"
       >
         {busy ? "Generating…" : "Generate certificate"}
