@@ -185,13 +185,40 @@ html {
 /*
  * `text-white` headings and metric values sit on cards that are light in
  * light mode. Solid buttons and badges set `text-white` together with their
- * own `bg-*`, so only bare `text-white` is darkened.
+ * own coloured `bg-*`, so only `text-white` that is bare or sits on a neutral
+ * (now light) background is darkened.
  * ponytail: class-string heuristic; white text inside a coloured *parent*
  * (rare) would also darken — migrate such spots to `text-fg-primary` / an
  * explicit `bg-*` if one turns up.
  */
-[data-theme="light"] .text-white:not([class*="bg-"]) {
-  color: var(--fg-primary);
+[data-theme="dark"] { --bare-white: #fff; }
+[data-theme="light"] { --bare-white: var(--fg-primary); }
+.text-white:is(
+  :not([class*="bg-"]),
+  [class*="bg-gray-"], [class*="bg-slate-"], [class*="bg-zinc-"],
+  [class*="bg-neutral-"], [class*="bg-stone-"], [class*="bg-surface"],
+  [class*="bg-white/"], [class*="bg-black/"], [class*="bg-transparent"]
+) {
+  color: var(--bare-white, #fff);
+}
+
+/*
+ * shadcn-style tokens (`bg-card`, `border-border`, `text-muted-foreground`, …)
+ * used by a few components (SOC Insights among them) were never defined, so
+ * their borders fell back to `currentColor` and their cards had no fill.
+ * Map them onto the console's own surface/foreground tokens.
+ */
+@theme inline {
+  --color-background: var(--surface-base);
+  --color-foreground: var(--fg-primary);
+  --color-card: var(--surface-card);
+  --color-card-foreground: var(--fg-primary);
+  --color-border: var(--surface-border);
+  --color-muted: var(--surface-subtle);
+  --color-muted-foreground: var(--fg-muted);
+  --color-primary: #2563eb; /* brand-600 */
+  --color-primary-foreground: #fff;
+  --color-destructive: #ef4444; /* red-500 */
 }
 
 body {

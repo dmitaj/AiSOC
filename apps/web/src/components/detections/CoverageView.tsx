@@ -249,7 +249,7 @@ function TierFilterBar({
           className={clsx(
             'rounded-full border px-3 py-1 text-xs font-medium transition-colors',
             value === opt.id
-              ? 'border-brand-300/60 bg-brand-500/20 text-white'
+              ? 'border-brand-300/60 bg-brand-500/20 text-fg-primary'
               : 'border-white/10 bg-surface-card/40 text-gray-300 hover:bg-white/5',
           )}
         >
@@ -352,10 +352,10 @@ function TechniqueCell({ technique }: { technique: BuiltTechnique }) {
       }`}
     >
       <div className="flex items-baseline justify-between gap-2">
-        <span className="font-mono text-[11px] font-medium text-white/90">
+        <span className="font-mono text-[11px] font-medium text-fg-primary">
           {technique.id}
         </span>
-        <span className="font-mono text-[11px] text-white">
+        <span className="font-mono text-[11px] text-fg-primary">
           {technique.total}
         </span>
       </div>

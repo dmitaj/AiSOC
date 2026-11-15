@@ -89,7 +89,11 @@ variables under `[data-theme="light"]`:
   (`900` ↔ `100`, `400` ↔ `600`, `500` stays);
 - colour ramps, `brand` included, swap the pale and deep ends and keep
   `500`/`600`, so solid buttons such as `bg-blue-600 text-white` are unchanged;
-- a bare `text-white` (no `bg-*` on the same element) renders as `fg-primary`.
+- `text-white` with no `bg-*` on the same element, or on a neutral/translucent
+  one, renders as `fg-primary`; on a coloured `bg-*` (buttons, badges) it stays
+  white;
+- shadcn-style tokens (`bg-card`, `border-border`, `text-muted-foreground`,
+  `bg-primary`, …) map onto the surface/foreground tokens.
 
 `[data-theme="dark"]` restates Tailwind's defaults so a dark-locked boundary
 inside a light page keeps the real palette. Hex backgrounds (`bg-[#0d1117]`)
@@ -105,6 +109,7 @@ toggle in the chrome doesn't make them look broken.
 | --- | --- | --- |
 | `/` marketing landing | Hero/Architecture/Features ride a fixed dark gradient. | WS-F1 follow-up |
 | Playbook DAG canvas | `@xyflow/react` colors are tuned for dark mode. | WS-F1 follow-up |
+| Attack graph canvases (`AttackGraphView`, `RealtimeGraph`) | Node/edge colours are tuned for a dark canvas. | WS-F1 follow-up |
 
 ## Why the bootstrap script is render-blocking
 

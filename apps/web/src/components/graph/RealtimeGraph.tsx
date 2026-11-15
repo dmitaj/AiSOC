@@ -356,7 +356,7 @@ export function RealtimeGraph({
           </button>
         </div>
       </header>
-      <div ref={containerRef} className="relative h-full min-h-[400px] flex-1 bg-[#0a1120]" />
+      <div data-theme="dark" ref={containerRef} className="relative h-full min-h-[400px] flex-1 bg-[#0a1120]" />
     </div>
   );
 }

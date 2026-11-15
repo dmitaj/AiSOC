@@ -128,7 +128,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `text-white` takes `fg-primary` — with Tailwind's defaults restated under
   `[data-theme="dark"]` so dark-locked boundaries keep the real palette. The
   Live Feed panel and command palette moved off hard-coded hex backgrounds to
-  `surface-*` tokens. The top-bar toggle cycled dark → light → system; with a
+  `surface-*` tokens, the attack-graph canvases are dark-locked boundaries,
+  and the shadcn-style tokens SOC Insights used (`bg-card`, `border-border`,
+  `bg-primary`, …), which were never defined, now map onto the console's own. The top-bar toggle cycled dark → light → system; with a
   dark OS the system step painted dark again, so getting back to light took
   two presses. It now flips the painted theme; system stays selectable in
   Settings.
