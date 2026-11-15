@@ -241,6 +241,9 @@ var connectorOCSFClass = map[string]connectorClass{
 	// ransomware canary, a malicious process — and undelivered reports are
 	// dropped in the connector, so what reaches ingest is a finding.
 	"huntress": {classUID: classSecurityFinding},
+	// crowdsec reads LAPI alerts: each is a scenario that overflowed on a
+	// source IP (and usually the ban decision taken), a finding, not telemetry.
+	"crowdsec": {classUID: classSecurityFinding},
 	// eset_protect reads the ESET Connect /v1/detections list: every record
 	// is a detection ESET's endpoint protection raised on a device — an
 	// antivirus or HIPS hit, a blocked network intrusion, an ESET Inspect

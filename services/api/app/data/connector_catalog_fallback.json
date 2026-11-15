@@ -1042,6 +1042,53 @@
   },
   {
     "capabilities": [
+      "pull_alerts"
+    ],
+    "category": "network",
+    "connector_id": "crowdsec",
+    "connector_name": "CrowdSec",
+    "description": "CrowdSec alerts and decisions from a Local API (LAPI): the scenario that fired, the source IP with its AS and country, and the ban or captcha decision taken. Machine login for full alerts, or a bouncer API key for decisions only. Read-only.",
+    "docs_url": "/docs/connectors/crowdsec",
+    "fields": [
+      {
+        "help_text": "Base URL of the CrowdSec Local API (default port 8080).",
+        "label": "LAPI URL",
+        "name": "lapi_url",
+        "placeholder": "http://crowdsec.example.com:8080",
+        "required": true,
+        "type": "string"
+      },
+      {
+        "help_text": "From `cscli machines add`. Needed for alerts.",
+        "label": "Machine ID",
+        "name": "machine_id",
+        "required": false,
+        "type": "string"
+      },
+      {
+        "label": "Machine password",
+        "name": "password",
+        "required": false,
+        "type": "secret"
+      },
+      {
+        "help_text": "From `cscli bouncers add`. Used for decisions only, and only when no machine is configured.",
+        "label": "Bouncer API key",
+        "name": "api_key",
+        "required": false,
+        "type": "secret"
+      },
+      {
+        "default": true,
+        "label": "Verify TLS Certificate",
+        "name": "verify_tls",
+        "required": false,
+        "type": "boolean"
+      }
+    ]
+  },
+  {
+    "capabilities": [
       "pull_alerts",
       "isolate_host",
       "unisolate_host",
