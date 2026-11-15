@@ -72,6 +72,12 @@ Instead of a client secret you can authenticate the app with a certificate. The 
 
 Exactly one of secret or certificate must be configured; if both are set, the certificate is used. The key must be RSA. Existing secret-based instances keep working unchanged.
 
+### One-click OAuth with a certificate
+
+The console's **Connect with Microsoft Entra ID via OAuth** panel can use the same certificate. Under **Register OAuth app**, switch **Client secret | Certificate** to **Certificate**, enter the app's **Client ID**, and paste the PEM (private key, ideally followed by the certificate). The thumbprint field is only needed when the PEM has no `CERTIFICATE` block, and the password field only when the key is encrypted; the key is re-stored unencrypted inside the credential vault, so the password is never kept. The PEM is validated on save (an unreadable or non-RSA key, or a bad thumbprint, is rejected with a 422) and is never shown again — the panel only reports that a certificate is registered.
+
+The authorization-code exchange and every background token refresh then authenticate with an RS256 `client_assertion` (`x5t`, plus `x5t#S256` when the certificate is present) instead of `client_secret`. The certificate option appears only for Microsoft identity platform apps (token endpoint on `login.microsoftonline.com` / `login.microsoft.com`); other OAuth providers accept a client secret only.
+
 ## Polling details
 
 - Default interval: **300 seconds**. Override via `connector_config.poll_interval_seconds`.

@@ -64,10 +64,14 @@ class _FakeAppCredential:
         client_id: str = "client-id-123",
         client_secret_vault: str = "client-secret-encrypted",
         token_url: str | None = "https://provider.example.com/oauth/token",
+        client_certificate_vault: str | None = None,
+        client_certificate_thumbprint: str | None = None,
     ) -> None:
         self.client_id = client_id
         self.client_secret_vault = client_secret_vault
         self.token_url = token_url
+        self.client_certificate_vault = client_certificate_vault
+        self.client_certificate_thumbprint = client_certificate_thumbprint
 
 
 def _build_vault() -> CredentialVault:

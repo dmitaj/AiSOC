@@ -4,7 +4,8 @@ Two tables back the ``/api/v1/oauth/start`` + ``/api/v1/oauth/callback``
 endpoints:
 
 * :class:`OAuthAppCredential`
-    Per-tenant, per-connector-class OAuth client_id / client_secret.
+    Per-tenant, per-connector-class OAuth client_id / client_secret (or,
+    for Microsoft identity platform, an app certificate).
     The platform does not bake in a single shared client; each tenant
     registers their own OAuth app (or a managed-deployment operator
     pre-fills it for the tenant). ``client_secret_vault`` is opaque
@@ -53,7 +54,14 @@ class OAuthAppCredential(Base):
     client_id: Mapped[str] = mapped_column(Text, nullable=False)
     # Encrypted client secret (vault:v1:<base64>). Never round-trips to
     # the UI; we expose only ``has_secret: bool`` in the GET endpoint.
-    client_secret_vault: Mapped[str] = mapped_column(Text, nullable=False)
+    # NULL when the app authenticates with a certificate instead
+    # (migration 162 CHECKs that one of the two is present).
+    client_secret_vault: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Microsoft identity platform only: vault-encrypted PEM (private key,
+    # optionally + cert) used to sign an RS256 ``client_assertion``, and
+    # the hex SHA-1 thumbprint that becomes its ``x5t`` header.
+    client_certificate_vault: Mapped[str | None] = mapped_column(Text, nullable=True)
+    client_certificate_thumbprint: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Optional override of the default authorize/token URLs for on-prem
     # providers (Atlassian Data Center, GitHub Enterprise Server,
     # internal Okta orgs). NULL means use the default from the

@@ -45,6 +45,7 @@ from app.db.database import AsyncSessionLocal
 from app.models.connector import Connector
 from app.models.oauth import OAuthAppCredential
 from app.security.credential_vault import CredentialVaultError, get_vault
+from app.services.ms_client_assertion import token_client_auth
 
 logger = logging.getLogger(__name__)
 
@@ -227,8 +228,8 @@ async def _refresh_one(
         # this step). Treat as a soft skip, not a failure.
         return False
 
-    # 2. Resolve the per-tenant OAuthAppCredential for client_id /
-    # client_secret. Without this we can't talk to the provider.
+    # 2. Resolve the per-tenant OAuthAppCredential for client_id +
+    # client_secret (or certificate). Without this we can't talk to the provider.
     app_stmt = select(OAuthAppCredential).where(
         OAuthAppCredential.tenant_id == tenant_id,
         OAuthAppCredential.connector_type == connector_type,
@@ -246,23 +247,6 @@ async def _refresh_one(
             connector=connector,
             alarm_threshold=alarm_threshold,
             reason="app_credential_missing",
-        )
-        return False
-
-    try:
-        client_secret = vault.decrypt(app_credential.client_secret_vault)
-    except CredentialVaultError as exc:
-        logger.warning(
-            "oauth_refresh.client_secret_decrypt_failed connector_id=%s tenant=%s err=%s",
-            connector.id,
-            tenant_id,
-            type(exc).__name__,
-        )
-        await _record_failure(
-            db,
-            connector=connector,
-            alarm_threshold=alarm_threshold,
-            reason="client_secret_decrypt_failed",
         )
         return False
 
@@ -284,12 +268,30 @@ async def _refresh_one(
         )
         return False
 
-    # 4. POST to the token endpoint with grant_type=refresh_token.
+    # 4. Decrypt the client credential: client_secret, or a certificate
+    # that signs an RS256 client_assertion (Microsoft identity platform).
+    try:
+        client_auth = token_client_auth(vault, app_credential, token_url)
+    except (CredentialVaultError, ValueError) as exc:
+        logger.warning(
+            "oauth_refresh.client_secret_decrypt_failed connector_id=%s tenant=%s err=%s",
+            connector.id,
+            tenant_id,
+            type(exc).__name__,
+        )
+        await _record_failure(
+            db,
+            connector=connector,
+            alarm_threshold=alarm_threshold,
+            reason="client_secret_decrypt_failed",
+        )
+        return False
+
+    # 5. POST to the token endpoint with grant_type=refresh_token.
     body: dict[str, str] = {
         "grant_type": "refresh_token",
         "refresh_token": str(refresh_token),
-        "client_id": app_credential.client_id,
-        "client_secret": client_secret,
+        **client_auth,
     }
     try:
         async with httpx.AsyncClient(timeout=timeout_s) as client:
@@ -368,7 +370,7 @@ async def _refresh_one(
         )
         return False
 
-    # 5. Build a fresh auth_payload — keep the existing refresh_token
+    # 6. Build a fresh auth_payload — keep the existing refresh_token
     # when the provider rotates only access_token (Auth0 default), and
     # promote the rotated one when present (Salesforce, GitHub Apps).
     auth_payload: dict[str, Any] = dict(decrypted)

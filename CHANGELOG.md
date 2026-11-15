@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Certificate credential for the one-click Microsoft OAuth app.** The
+  console's **Register OAuth app** form gets a **Client secret | Certificate**
+  toggle for Microsoft identity platform providers (token endpoint on
+  `login.microsoftonline.com` / `login.microsoft.com`). `PUT
+  /api/v1/oauth/app/{connector_type}` accepts `certificate_pem` (+ optional
+  `certificate_thumbprint`, `private_key_password`) in place of
+  `client_secret` — exactly one is required, the certificate wins if both are
+  sent, the PEM is validated on save (422 otherwise), and a certificate for
+  any other provider is refused. The GET projection adds `has_certificate`
+  and `certificate_thumbprint`, never the key. The code exchange and the
+  background refresh then send an RS256 `client_assertion` instead of
+  `client_secret` (`app/services/ms_client_assertion.py`). Migration
+  `162_oauth_app_certificate_credential.sql` makes `client_secret_vault`
+  nullable and adds `client_certificate_vault` / `client_certificate_thumbprint`
+  with a CHECK that one credential is present; existing secret-based apps are
+  unchanged.
+
 - **Certificate authentication for Microsoft Entra ID and Microsoft 365 audit.**
   Both connectors accept an Entra app certificate instead of a client secret:
   new optional `certificate_pem` (secret, PEM private key, optionally with the

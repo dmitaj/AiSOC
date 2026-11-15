@@ -4049,6 +4049,9 @@ export interface OAuthAppView {
   connector_type: string;
   client_id: string;
   has_secret: boolean;
+  /** Microsoft identity platform only: an app certificate is stored instead of a secret. */
+  has_certificate?: boolean;
+  certificate_thumbprint?: string | null;
   authorize_url: string | null;
   token_url: string | null;
   scopes: string[] | null;
@@ -4065,7 +4068,14 @@ export interface OAuthAppView {
  */
 export interface OAuthAppRegistrationPayload {
   client_id: string;
-  client_secret: string;
+  /** Exactly one of `client_secret` / `certificate_pem` is required. */
+  client_secret?: string;
+  /** Microsoft identity platform only: PEM with the app certificate's private key (+ optionally the cert). */
+  certificate_pem?: string;
+  /** Hex SHA-1; required only when `certificate_pem` has no CERTIFICATE block. */
+  certificate_thumbprint?: string | null;
+  /** Only when the private key in `certificate_pem` is encrypted. Never stored. */
+  private_key_password?: string | null;
   authorize_url?: string | null;
   token_url?: string | null;
   scopes?: string[] | null;

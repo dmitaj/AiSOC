@@ -775,16 +775,27 @@ function OAuthPanel({
   );
 }
 
+/** Microsoft identity platform token hosts — the only ones that accept a certificate credential. */
+export function isMicrosoftTokenUrl(url: string | null | undefined): boolean {
+  try {
+    const host = new URL(url ?? '').hostname.toLowerCase();
+    return host === 'login.microsoftonline.com' || host === 'login.microsoft.com';
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Inline form for registering or rotating a tenant's OAuth client.
  *
  * The schema's :class:`OAuthHints` already declares default authorize and
  * token URLs plus the scope set we recommend, so we pre-fill those — the
- * operator only *has* to provide ``client_id`` and ``client_secret``. Any
+ * operator only *has* to provide ``client_id`` and ``client_secret`` (or,
+ * for Microsoft identity platform, an app certificate PEM). Any
  * non-defaults they paste become per-tenant overrides on the
  * ``oauth_app_credentials`` row.
  */
-function OAuthAppRegistrationForm({
+export function OAuthAppRegistrationForm({
   entry,
   existing,
   schemaHints,
@@ -799,6 +810,12 @@ function OAuthAppRegistrationForm({
 }) {
   const [clientId, setClientId] = useState(existing?.client_id ?? '');
   const [clientSecret, setClientSecret] = useState('');
+  const [credentialMode, setCredentialMode] = useState<'secret' | 'certificate'>(
+    existing?.has_certificate ? 'certificate' : 'secret',
+  );
+  const [certificatePem, setCertificatePem] = useState('');
+  const [certificateThumbprint, setCertificateThumbprint] = useState('');
+  const [privateKeyPassword, setPrivateKeyPassword] = useState('');
   const [authorizeUrl, setAuthorizeUrl] = useState(
     existing?.authorize_url ?? schemaHints?.authorize_url ?? '',
   );
@@ -809,11 +826,19 @@ function OAuthAppRegistrationForm({
     (existing?.scopes ?? schemaHints?.scopes ?? []).join(' '),
   );
   const [saving, setSaving] = useState(false);
+  // Certificate credentials are Microsoft identity platform only; every
+  // other provider keeps the secret-only form.
+  const isMicrosoft = isMicrosoftTokenUrl(tokenUrl.trim() || schemaHints?.token_url);
+  const useCertificate = isMicrosoft && credentialMode === 'certificate';
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!clientId.trim() || !clientSecret.trim()) {
-      toast.error('Client ID and Client Secret are required');
+    if (!clientId.trim() || !(useCertificate ? certificatePem.trim() : clientSecret.trim())) {
+      toast.error(
+        useCertificate
+          ? 'Client ID and Certificate PEM are required'
+          : 'Client ID and Client Secret are required',
+      );
       return;
     }
     setSaving(true);
@@ -824,7 +849,13 @@ function OAuthAppRegistrationForm({
         .filter(Boolean);
       await oauthApi.upsertApp(entry.connector_id, {
         client_id: clientId.trim(),
-        client_secret: clientSecret,
+        ...(useCertificate
+          ? {
+              certificate_pem: certificatePem,
+              certificate_thumbprint: certificateThumbprint.trim() || null,
+              private_key_password: privateKeyPassword || null,
+            }
+          : { client_secret: clientSecret }),
         authorize_url: authorizeUrl.trim() || null,
         token_url: tokenUrl.trim() || null,
         scopes: scopes.length > 0 ? scopes : null,
@@ -833,6 +864,8 @@ function OAuthAppRegistrationForm({
       // it around once the vault has it. The next render of this form will
       // get a blank secret box, which is the right UX for "registered".
       setClientSecret('');
+      setCertificatePem('');
+      setPrivateKeyPassword('');
       toast.success('OAuth app registered');
       await onSaved();
     } catch (err) {
@@ -850,8 +883,34 @@ function OAuthAppRegistrationForm({
     <form onSubmit={handleSubmit} className="space-y-3 pt-1">
       <p className="text-xs text-gray-400 leading-relaxed">
         First time connecting? Register your OAuth app in {entry.connector_name} (using the
-        redirect URI shown in the docs), then paste the client credentials below.
+        redirect URI shown in the docs), then paste its client ID and a client secret
+        {isMicrosoft ? ' — or an app certificate (recommended for Entra ID) —' : ''} below.
       </p>
+      {isMicrosoft && (
+        <div
+          role="radiogroup"
+          aria-label="Client credential type"
+          className="inline-flex rounded-lg border border-surface-border bg-surface-card p-0.5"
+        >
+          {(['secret', 'certificate'] as const).map((mode) => (
+            <button
+              key={mode}
+              type="button"
+              role="radio"
+              aria-checked={credentialMode === mode}
+              onClick={() => setCredentialMode(mode)}
+              className={clsx(
+                'text-[11px] px-3 py-1 rounded-md transition-colors',
+                credentialMode === mode
+                  ? 'bg-surface-hover text-fg-primary font-semibold'
+                  : 'text-fg-muted hover:text-fg-secondary',
+              )}
+            >
+              {mode === 'secret' ? 'Client secret' : 'Certificate'}
+            </button>
+          ))}
+        </div>
+      )}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>
           <label className="block text-[11px] font-semibold text-gray-300 mb-1">
@@ -867,21 +926,90 @@ function OAuthAppRegistrationForm({
             autoComplete="off"
           />
         </div>
-        <div>
-          <label className="block text-[11px] font-semibold text-gray-300 mb-1">
-            Client Secret <span className="text-red-400">*</span>
-          </label>
-          <input
-            type="password"
-            value={clientSecret}
-            onChange={(e) => setClientSecret(e.target.value)}
-            placeholder={existing ? 'Re-enter to rotate' : '••••••••'}
-            className={clsx(fieldClass, 'font-mono')}
-            required
-            autoComplete="new-password"
-          />
-        </div>
+        {!useCertificate && (
+          <div>
+            <label className="block text-[11px] font-semibold text-gray-300 mb-1">
+              Client Secret <span className="text-red-400">*</span>
+            </label>
+            <input
+              type="password"
+              value={clientSecret}
+              onChange={(e) => setClientSecret(e.target.value)}
+              placeholder={existing ? 'Re-enter to rotate' : '••••••••'}
+              className={clsx(fieldClass, 'font-mono')}
+              required
+              autoComplete="new-password"
+            />
+          </div>
+        )}
       </div>
+      {useCertificate && (
+        <div className="space-y-3">
+          <div>
+            <label
+              htmlFor="oauth-certificate-pem"
+              className="block text-[11px] font-semibold text-fg-secondary mb-1"
+            >
+              Certificate PEM (private key) <span className="text-red-400">*</span>
+            </label>
+            <textarea
+              id="oauth-certificate-pem"
+              value={certificatePem}
+              onChange={(e) => setCertificatePem(e.target.value)}
+              placeholder={
+                existing?.has_certificate
+                  ? 'Certificate stored. Paste a new PEM to rotate.'
+                  : '-----BEGIN PRIVATE KEY-----\n…\n-----END PRIVATE KEY-----\n-----BEGIN CERTIFICATE-----\n…'
+              }
+              rows={5}
+              className={clsx(fieldClass, 'font-mono')}
+              spellCheck={false}
+              autoComplete="off"
+              required
+            />
+            <p className="mt-1 text-[10px] text-fg-muted leading-relaxed">
+              The RSA private key for the certificate whose public .cer you uploaded under App
+              registrations → Certificates &amp; secrets. Include the CERTIFICATE block to skip the
+              thumbprint. Stored encrypted; never shown again.
+            </p>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label
+                htmlFor="oauth-certificate-thumbprint"
+                className="block text-[11px] font-semibold text-fg-secondary mb-1"
+              >
+                Thumbprint (if no CERTIFICATE block)
+              </label>
+              <input
+                id="oauth-certificate-thumbprint"
+                type="text"
+                value={certificateThumbprint}
+                onChange={(e) => setCertificateThumbprint(e.target.value)}
+                placeholder={existing?.certificate_thumbprint ?? 'SHA-1 hex, e.g. 3F2A…'}
+                className={clsx(fieldClass, 'font-mono')}
+                autoComplete="off"
+              />
+            </div>
+            <div>
+              <label
+                htmlFor="oauth-private-key-password"
+                className="block text-[11px] font-semibold text-fg-secondary mb-1"
+              >
+                Private key password (if encrypted)
+              </label>
+              <input
+                id="oauth-private-key-password"
+                type="password"
+                value={privateKeyPassword}
+                onChange={(e) => setPrivateKeyPassword(e.target.value)}
+                className={clsx(fieldClass, 'font-mono')}
+                autoComplete="new-password"
+              />
+            </div>
+          </div>
+        </div>
+      )}
 
       <details className="group">
         <summary className="cursor-pointer text-[11px] text-gray-500 hover:text-gray-300 select-none">

@@ -13,9 +13,10 @@
  * required select starts on must be a value that select can actually submit.
  */
 
-import { describe, expect, it } from 'vitest';
-import { buildInitialValues } from './AddConnectorModal';
-import type { ConnectorSchemaField } from '@/lib/api';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { buildInitialValues, OAuthAppRegistrationForm } from './AddConnectorModal';
+import { oauthApi, type ConnectorCatalogEntry, type ConnectorSchemaField, type OAuthAppView } from '@/lib/api';
 
 function field(over: Partial<ConnectorSchemaField>): ConnectorSchemaField {
   return {
@@ -95,5 +96,43 @@ describe('buildInitialValues', () => {
       expect(allowed, `${f.name} has no options to start on`).not.toHaveLength(0);
       expect(allowed, `${f.name} starts on "${values[f.name]}", which it cannot display`).toContain(values[f.name]);
     }
+  });
+});
+
+describe('OAuthAppRegistrationForm credential toggle', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  const entry = (tokenUrl: string) =>
+    ({
+      connector_id: 'azure_entra',
+      connector_name: 'Microsoft Entra ID',
+      oauth: { supported_in_hosted: true, token_url: tokenUrl, authorize_url: tokenUrl, scopes: [] },
+    }) as unknown as ConnectorCatalogEntry;
+
+  const renderForm = (tokenUrl: string) => {
+    const e = entry(tokenUrl);
+    render(<OAuthAppRegistrationForm entry={e} existing={null} schemaHints={e.oauth} onSaved={() => {}} />);
+  };
+
+  it('sends certificate_pem (and no client_secret) for a Microsoft provider', async () => {
+    const upsert = vi.spyOn(oauthApi, 'upsertApp').mockResolvedValue({} as OAuthAppView);
+    renderForm('https://login.microsoftonline.com/common/oauth2/v2.0/token');
+    fireEvent.change(screen.getByPlaceholderText('client_xxxxxxxx'), { target: { value: 'cid' } });
+    fireEvent.click(screen.getByRole('radio', { name: 'Certificate' }));
+    expect(screen.queryByPlaceholderText('••••••••')).toBeNull();
+    const pem = screen.getByLabelText(/Certificate PEM/);
+    fireEvent.change(pem, { target: { value: '-----BEGIN PRIVATE KEY-----' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Register OAuth app' }));
+    await waitFor(() => expect(upsert).toHaveBeenCalled());
+    const payload = upsert.mock.calls[0][1];
+    expect(payload.certificate_pem).toBe('-----BEGIN PRIVATE KEY-----');
+    expect(payload).not.toHaveProperty('client_secret');
+    await waitFor(() => expect((pem as HTMLTextAreaElement).value).toBe(''));
+  });
+
+  it('offers no certificate option for other providers', () => {
+    renderForm('https://github.com/login/oauth/access_token');
+    expect(screen.queryByRole('radio', { name: 'Certificate' })).toBeNull();
+    expect(screen.getByPlaceholderText('••••••••')).toBeTruthy();
   });
 });
