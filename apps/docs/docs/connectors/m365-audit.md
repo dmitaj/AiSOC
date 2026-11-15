@@ -77,6 +77,23 @@ Instead of a client secret you can authenticate the app with a certificate. The 
 
 Exactly one of secret or certificate must be configured; if both are set, the certificate is used. The key must be RSA. Existing secret-based instances keep working unchanged.
 
+### Let AiSOC generate the certificate (auto-rotated)
+
+Instead of running `openssl` yourself, click **Generate certificate** under **Certificate PEM (private key)** (in the add wizard, the edit dialog, or the OAuth panel's **Certificate** mode). AiSOC creates an RSA-2048 key and a self-signed SHA-256 certificate valid for 730 days. The private key stays in AiSOC, vault-encrypted; the console only receives the public certificate and shows its thumbprint, expiry and a **Download .cer** button.
+
+1. Fill in **Tenant ID** (the OAuth panel asks for it next to the button) and, optionally, the app's **Application object ID** from its **Overview** page.
+2. Click **Generate certificate**, then **Download .cer**.
+3. Upload it in Entra admin center → **App registrations → your app → Certificates & secrets → Certificates**.
+4. **Test connection** and **Save** as usual. Until you save, the generated key is held for 24 hours under a one-time id; an abandoned one simply expires. Pasting your own PEM remains available and is unaffected.
+
+`GET /api/v1/connectors/{id}/certificate.cer` (or `GET /api/v1/oauth/app/{connector_type}/certificate.cer` for the OAuth app) downloads the current public certificate again. No endpoint ever returns the key.
+
+**Auto-rotation.** Once a day the api service checks every certificate AiSOC generated; one that expires in less than **30 days** is rolled over through Microsoft Graph: AiSOC requests an app-only token with the current certificate, calls [`addKey`](https://learn.microsoft.com/graph/api/application-addkey) with a new certificate and a proof-of-possession token signed by the current key, confirms the new certificate can obtain a token (retrying for a few minutes while Entra replicates), switches to it, and then calls `removeKey` for the old certificate with a proof signed by the new key. An application needs no Graph permission to roll its own keys. The proof names the app by its **object id**: give it when generating, or AiSOC looks it up with `GET /applications(appId=…)`, which needs `Application.Read.All` (or `Directory.Read.All`). For the very first certificate you uploaded by hand, AiSOC can find its key id only through that same read; without it the old certificate is left in place and the connector card says so — delete it in the portal when convenient. Each successful rotation is written to the audit log (`connectors:certificate_rotate`).
+
+If a rotation fails before the switch, AiSOC keeps the old certificate, shows the error on the connector card ("Last auto-rotation failed: …"), writes a `connectors:certificate_rotation_failed` audit entry and an `ms_cert_rotation.alarm` error log line, marks the connector unhealthy once fewer than 7 days remain, and retries the next day. The connector card and edit dialog show **Certificate expires YYYY-MM-DD · auto-rotates**; a pasted certificate shows **expires YYYY-MM-DD — rotate manually** and is never touched.
+
+`addKey` can only be authorised by a certificate that is still valid. If every certificate on the app has expired (for example the api service was down for the whole 30-day window), AiSOC cannot recover on its own: generate a new certificate, upload the `.cer` manually and save.
+
 ### One-click OAuth with a certificate
 
 The console's **Connect with Microsoft 365 Audit via OAuth** panel can use the same certificate. Under **Register OAuth app**, switch **Client secret | Certificate** to **Certificate**, enter the app's **Client ID**, and paste the PEM (private key, ideally followed by the certificate). The thumbprint field is only needed when the PEM has no `CERTIFICATE` block, and the password field only when the key is encrypted; the key is re-stored unencrypted inside the credential vault, so the password is never kept. The PEM is validated on save (an unreadable or non-RSA key, or a bad thumbprint, is rejected with a 422) and is never shown again — the panel only reports that a certificate is registered.

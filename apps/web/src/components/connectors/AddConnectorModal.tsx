@@ -44,9 +44,11 @@ import {
   type ConnectorLastEvent,
   type ConnectorSchemaField,
   type ConnectorTestResult,
+  type GeneratedCertificate,
   type OAuthAppView,
   type TroubleshootResponse,
 } from '@/lib/api';
+import { CertificateGenerator, CertificateStatus } from './CertificateGenerator';
 
 /**
  * Turn a thrown request error into something an operator can act on.
@@ -147,6 +149,26 @@ function partitionFormValues(
     }
   }
   return { auth_config, connector_config };
+}
+
+/** Fields a generated certificate replaces (the paste-your-own-PEM path). */
+export const PASTED_CERT_FIELDS = new Set(['certificate_pem', 'certificate_thumbprint', 'private_key_password']);
+
+/**
+ * Point ``auth_config`` at a generated certificate: the API swaps the pending
+ * id for the parked key, so any pasted PEM fields are dropped.
+ */
+export function withGeneratedCertificate(
+  authConfig: Record<string, unknown>,
+  connectorConfig: Record<string, unknown>,
+  cert: GeneratedCertificate | null,
+): void {
+  if (!cert) return;
+  for (const k of PASTED_CERT_FIELDS) {
+    delete authConfig[k];
+    delete connectorConfig[k];
+  }
+  authConfig.certificate_pending_id = cert.pending_certificate_id;
 }
 
 interface FieldInputProps {
@@ -816,6 +838,7 @@ export function OAuthAppRegistrationForm({
   const [certificatePem, setCertificatePem] = useState('');
   const [certificateThumbprint, setCertificateThumbprint] = useState('');
   const [privateKeyPassword, setPrivateKeyPassword] = useState('');
+  const [generatedCert, setGeneratedCert] = useState<GeneratedCertificate | null>(null);
   const [authorizeUrl, setAuthorizeUrl] = useState(
     existing?.authorize_url ?? schemaHints?.authorize_url ?? '',
   );
@@ -833,10 +856,11 @@ export function OAuthAppRegistrationForm({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!clientId.trim() || !(useCertificate ? certificatePem.trim() : clientSecret.trim())) {
+    const hasCertificate = Boolean(generatedCert) || Boolean(certificatePem.trim());
+    if (!clientId.trim() || !(useCertificate ? hasCertificate : clientSecret.trim())) {
       toast.error(
         useCertificate
-          ? 'Client ID and Certificate PEM are required'
+          ? 'Client ID and a certificate (generate one or paste a PEM) are required'
           : 'Client ID and Client Secret are required',
       );
       return;
@@ -849,7 +873,9 @@ export function OAuthAppRegistrationForm({
         .filter(Boolean);
       await oauthApi.upsertApp(entry.connector_id, {
         client_id: clientId.trim(),
-        ...(useCertificate
+        ...(useCertificate && generatedCert
+          ? { certificate_pending_id: generatedCert.pending_certificate_id }
+          : useCertificate
           ? {
               certificate_pem: certificatePem,
               certificate_thumbprint: certificateThumbprint.trim() || null,
@@ -866,6 +892,7 @@ export function OAuthAppRegistrationForm({
       setClientSecret('');
       setCertificatePem('');
       setPrivateKeyPassword('');
+      setGeneratedCert(null);
       toast.success('OAuth app registered');
       await onSaved();
     } catch (err) {
@@ -943,7 +970,26 @@ export function OAuthAppRegistrationForm({
           </div>
         )}
       </div>
+      {useCertificate && existing?.has_certificate && (
+        <CertificateStatus
+          lifecycle={{
+            managed: existing.certificate_managed,
+            not_after: existing.certificate_not_after,
+            last_error: existing.certificate_rotation_error,
+            last_warning: existing.certificate_rotation_warning,
+          }}
+          onDownload={() => oauthApi.downloadCertificate(entry.connector_id)}
+        />
+      )}
       {useCertificate && (
+        <CertificateGenerator
+          connectorType={entry.connector_id}
+          name={entry.connector_name}
+          generated={generatedCert}
+          onGenerated={setGeneratedCert}
+        />
+      )}
+      {useCertificate && !generatedCert && (
         <div className="space-y-3">
           <div>
             <label
@@ -1099,6 +1145,9 @@ interface ConfigStepProps {
   setInstanceName: (next: string) => void;
   /** Last test result, so we can render the AI troubleshooter inline. */
   testResult: ConnectorTestResult | null;
+  /** Certificate generated server-side for this form, if any. */
+  generatedCert: GeneratedCertificate | null;
+  setGeneratedCert: (cert: GeneratedCertificate | null) => void;
 }
 
 function ConfigStep({
@@ -1108,9 +1157,44 @@ function ConfigStep({
   instanceName,
   setInstanceName,
   testResult,
+  generatedCert,
+  setGeneratedCert,
 }: ConfigStepProps) {
   const updateField = (name: string, next: string | number | boolean) => {
     setValues({ ...values, [name]: next });
+  };
+
+  // Schema field, plus — under the certificate PEM field — the "Generate
+  // certificate" alternative. A generated certificate hides the paste fields.
+  const renderField = (f: ConnectorSchemaField) => {
+    if (generatedCert && PASTED_CERT_FIELDS.has(f.name) && f.name !== 'certificate_pem') return null;
+    return (
+      <div key={f.name}>
+        {!(generatedCert && f.name === 'certificate_pem') && (
+          <>
+            <label className="block text-xs font-semibold text-gray-300 mb-1">
+              {f.label}
+              {f.required && <span className="text-red-400 ml-0.5">*</span>}
+            </label>
+            <FieldInput field={f} value={values[f.name]} onChange={(v) => updateField(f.name, v)} />
+            {f.help_text && (
+              <p className="mt-1 text-xs text-gray-500 leading-relaxed">{f.help_text}</p>
+            )}
+          </>
+        )}
+        {f.name === 'certificate_pem' && (
+          <div className="mt-2">
+            <CertificateGenerator
+              connectorType={entry.connector_id}
+              name={instanceName}
+              entraTenantId={String(values.tenant_id ?? '')}
+              generated={generatedCert}
+              onGenerated={setGeneratedCert}
+            />
+          </div>
+        )}
+      </div>
+    );
   };
 
   // Names of secret-typed fields, passed to the troubleshooter so the LLM
@@ -1164,38 +1248,10 @@ function ConfigStep({
           <summary className="cursor-pointer select-none px-4 py-3 text-xs font-semibold text-gray-400 hover:text-gray-200 transition-colors">
             Or use static credentials instead
           </summary>
-          <div className="px-4 pb-4 pt-1 space-y-5">
-            {entry.fields.map((f) => (
-              <div key={f.name}>
-                <label className="block text-xs font-semibold text-gray-300 mb-1">
-                  {f.label}
-                  {f.required && <span className="text-red-400 ml-0.5">*</span>}
-                </label>
-                <FieldInput
-                  field={f}
-                  value={values[f.name]}
-                  onChange={(v) => updateField(f.name, v)}
-                />
-                {f.help_text && (
-                  <p className="mt-1 text-xs text-gray-500 leading-relaxed">{f.help_text}</p>
-                )}
-              </div>
-            ))}
-          </div>
+          <div className="px-4 pb-4 pt-1 space-y-5">{entry.fields.map(renderField)}</div>
         </details>
       ) : (
-        entry.fields.map((f) => (
-          <div key={f.name}>
-            <label className="block text-xs font-semibold text-gray-300 mb-1">
-              {f.label}
-              {f.required && <span className="text-red-400 ml-0.5">*</span>}
-            </label>
-            <FieldInput field={f} value={values[f.name]} onChange={(v) => updateField(f.name, v)} />
-            {f.help_text && (
-              <p className="mt-1 text-xs text-gray-500 leading-relaxed">{f.help_text}</p>
-            )}
-          </div>
-        ))
+        entry.fields.map(renderField)
       )}
 
       {entry.docs_url && (
@@ -1454,6 +1510,7 @@ export function AddConnectorModal({
   // Connector instance returned by the create call — used by the verify
   // step to poll for the first event.
   const [createdConnector, setCreatedConnector] = useState<Connector | null>(null);
+  const [generatedCert, setGeneratedCert] = useState<GeneratedCertificate | null>(null);
 
   // Load catalog whenever the modal opens. We don't keep stale data around
   // between opens because the operator may have added a new connector class
@@ -1473,6 +1530,7 @@ export function AddConnectorModal({
     // shouldn't yank the operator's filter out from under them mid-flow.
     setCategoryFilter(activeCategory ?? null);
     setCreatedConnector(null);
+    setGeneratedCert(null);
 
     connectorsApi
       .catalog()
@@ -1531,6 +1589,7 @@ export function AddConnectorModal({
     setValues(buildInitialValues(entry.fields));
     setInstanceName(entry.connector_name);
     setTestResult(null);
+    setGeneratedCert(null);
     setStep('configure');
   };
 
@@ -1546,6 +1605,7 @@ export function AddConnectorModal({
     setTestResult(null);
     try {
       const { auth_config, connector_config } = partitionFormValues(selected.fields, values);
+      withGeneratedCertificate(auth_config, connector_config, generatedCert);
       const result = await connectorsApi.testInline({
         connector_type: selected.connector_id,
         auth_config,
@@ -1580,6 +1640,7 @@ export function AddConnectorModal({
     setSaving(true);
     try {
       const { auth_config, connector_config } = partitionFormValues(selected.fields, values);
+      withGeneratedCertificate(auth_config, connector_config, generatedCert);
       const created = await connectorsApi.create({
         name: instanceName.trim(),
         connector_type: selected.connector_id,
@@ -1768,6 +1829,8 @@ export function AddConnectorModal({
                     instanceName={instanceName}
                     setInstanceName={setInstanceName}
                     testResult={testResult}
+                    generatedCert={generatedCert}
+                    setGeneratedCert={setGeneratedCert}
                   />
                 )}
 

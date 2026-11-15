@@ -226,7 +226,7 @@ async def test_code_exchange_secret_unchanged(vault: CredentialVault, monkeypatc
 
 @pytest.mark.asyncio
 async def test_refresh_sends_client_assertion(vault: CredentialVault, monkeypatch: pytest.MonkeyPatch) -> None:
-    conn = SimpleNamespace(
+    conn: Any = SimpleNamespace(
         id=uuid.uuid4(),
         tenant_id=uuid.uuid4(),
         connector_type="azure_entra",

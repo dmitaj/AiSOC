@@ -559,7 +559,12 @@ class ConnectorScheduler:
         # Filter out the scheduler-only knobs from connector_config before
         # passing to the constructor — connectors don't accept
         # ``poll_interval_seconds`` (or the ingest ``checkpoint``) as a kwarg.
-        runtime_config = {k: v for k, v in (target.connector_config or {}).items() if k not in {"poll_interval_seconds", "checkpoint"}}
+        # ``certificate_lifecycle`` is the api's Entra certificate metadata.
+        runtime_config = {
+            k: v
+            for k, v in (target.connector_config or {}).items()
+            if k not in {"poll_interval_seconds", "checkpoint", "certificate_lifecycle"}
+        }
         kwargs = {**auth, **runtime_config}
 
         # A stored destination inside the deployment must not be polled —

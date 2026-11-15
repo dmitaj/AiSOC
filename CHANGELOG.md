@@ -9,6 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **AiSOC-generated, auto-rotated Entra app certificates.** `POST
+  /api/v1/connectors/certificates` generates an RSA-2048 key and a self-signed
+  SHA-256 certificate valid for 730 days, parks the key vault-encrypted for 24
+  hours (Redis, tenant-scoped) and returns only the public certificate
+  (thumbprint, expiry, PEM and DER) plus a `pending_certificate_id`. Passing
+  that id as `auth_config.certificate_pending_id` to `POST /connectors`,
+  `PATCH /connectors/{id}` or `POST /connectors/test`, or as
+  `certificate_pending_id` to `PUT /oauth/app/{connector_type}`, stores the key
+  exactly where a pasted PEM goes. `GET /connectors/{id}/certificate.cer` and
+  `GET /oauth/app/{connector_type}/certificate.cer` download the public
+  certificate again; no endpoint returns the key. The add wizard, the edit
+  dialog and the OAuth panel get a **Generate certificate** button (thumbprint,
+  expiry, **Download .cer**, upload instructions); pasting a PEM still works.
+  Expiry and whether AiSOC manages the certificate are recorded in
+  `connector_config.certificate_lifecycle` for connectors and in the new
+  `client_certificate_not_after` / `client_certificate_managed` /
+  `client_certificate_rotation` columns for the OAuth app (migration
+  `163_oauth_app_certificate_lifecycle.sql`), and shown as "Certificate expires
+  … · auto-rotates" or "— rotate manually". A new lease-guarded daily worker
+  (`app/workers/ms_cert_rotation.py`, `MS_CERT_ROTATION_WORKER_ENABLED`) rolls
+  every AiSOC-generated certificate within 30 days of expiry through Microsoft
+  Graph `addKey` / `removeKey` with proof-of-possession tokens, verifies the
+  new certificate obtains a token before switching, audits each rotation, and
+  on failure keeps the old certificate, records the error on the row, logs an
+  alarm and retries the next day. Pasted certificates are never rotated.
+
 - **Certificate credential for the one-click Microsoft OAuth app.** The
   console's **Register OAuth app** form gets a **Client secret | Certificate**
   toggle for Microsoft identity platform providers (token endpoint on

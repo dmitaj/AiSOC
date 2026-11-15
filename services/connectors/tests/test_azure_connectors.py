@@ -533,3 +533,14 @@ def test_schema_cert_fields_optional(cls_index):
         assert fields[name].required is False
     assert fields["certificate_pem"].type == "secret"
     assert fields["private_key_password"].type == "secret"
+
+
+@pytest.mark.parametrize("cls_index", [0, 1])
+def test_certificate_lifecycle_metadata_is_not_a_constructor_kwarg(cls_index):
+    """The api keeps ``connector_config.certificate_lifecycle`` (expiry, managed);
+    construction sites must drop it or the instance becomes a TypeError."""
+    from app.api.router import _connector_kwargs
+
+    pem, _, _ = _make_cert_pem()
+    stored = {"tenant_id": _TENANT, "client_id": _CLIENT, "certificate_lifecycle": {"managed": True, "not_after": "2028-01-01"}}
+    _connector_cases()[cls_index](certificate_pem=pem, **_connector_kwargs(stored))

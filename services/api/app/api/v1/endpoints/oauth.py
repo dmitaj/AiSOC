@@ -69,19 +69,19 @@ from typing import Annotated, Any
 from urllib.parse import quote, urlencode, urlparse, urlsplit, urlunsplit
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, select
 
 from app.api.v1.deps import AuthUser, DBSession, require_permission
-from app.api.v1.endpoints.connectors import _validate_connector_type
+from app.api.v1.endpoints.connectors import _validate_connector_type, cer_response
 from app.core.config import settings
 from app.core.logging import safe_log_value
 from app.models.connector import Connector
 from app.models.oauth import OAuthAppCredential, OAuthState
 from app.security.credential_vault import CredentialVaultError, get_vault
-from app.services import ms_client_assertion
+from app.services import ms_cert_lifecycle, ms_client_assertion
 
 logger = logging.getLogger(__name__)
 
@@ -467,6 +467,9 @@ class OAuthAppRegistration(BaseModel):
     # Used once to decrypt an encrypted key; never stored (the key is
     # re-serialised unencrypted and then vault-encrypted).
     private_key_password: str | None = Field(default=None, max_length=1024)
+    # A certificate AiSOC generated (``POST /connectors/certificates``) in
+    # place of a pasted PEM; it is rotated automatically before expiry.
+    certificate_pending_id: str | None = Field(default=None, max_length=64)
     authorize_url: str | None = Field(default=None, max_length=512)
     token_url: str | None = Field(default=None, max_length=512)
     scopes: list[str] | None = Field(default=None, max_length=64)
@@ -485,6 +488,12 @@ class OAuthAppView(BaseModel):
     has_secret: bool
     has_certificate: bool = False
     certificate_thumbprint: str | None = None
+    # Expiry, and whether AiSOC generated the certificate and so rotates it.
+    certificate_not_after: datetime | None = None
+    certificate_managed: bool = False
+    # Last auto-rotation failure / post-rotation warning, for the UI.
+    certificate_rotation_error: str | None = None
+    certificate_rotation_warning: str | None = None
     authorize_url: str | None
     token_url: str | None
     scopes: list[str] | None
@@ -499,6 +508,10 @@ def _app_view(row: OAuthAppCredential) -> OAuthAppView:
         has_secret=bool(row.client_secret_vault),
         has_certificate=bool(row.client_certificate_vault),
         certificate_thumbprint=row.client_certificate_thumbprint,
+        certificate_not_after=row.client_certificate_not_after,
+        certificate_managed=bool(row.client_certificate_managed),
+        certificate_rotation_error=(row.client_certificate_rotation or {}).get("last_error"),
+        certificate_rotation_warning=(row.client_certificate_rotation or {}).get("last_warning"),
         authorize_url=row.authorize_url,
         token_url=row.token_url,
         scopes=list(row.scopes) if row.scopes else None,
@@ -555,7 +568,10 @@ async def upsert_oauth_app(
     encrypted_secret: str | None = None
     encrypted_cert: str | None = None
     thumbprint: str | None = None
-    if payload.certificate_pem and payload.certificate_pem.strip():
+    not_after: datetime | None = None
+    managed = False
+    rotation: dict[str, Any] = {}
+    if payload.certificate_pending_id or (payload.certificate_pem and payload.certificate_pem.strip()):
         # Certificate auth is Microsoft identity platform only: the
         # effective token URL (tenant override, else the catalog hint)
         # must be an Entra host.
@@ -570,14 +586,29 @@ async def upsert_oauth_app(
                     f"(Entra ID) OAuth apps; {safe_type} supports a client secret only."
                 ),
             )
-        try:
-            pem, thumbprint = ms_client_assertion.normalize_certificate(
-                payload.certificate_pem,
-                payload.certificate_thumbprint or "",
-                payload.private_key_password or "",
-            )
-        except ValueError as exc:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        if payload.certificate_pending_id:
+            try:
+                pending = await ms_cert_lifecycle.load_pending(current_user.tenant_id, payload.certificate_pending_id, consume=True)
+                pem = get_vault().decrypt(pending["pem_vault"])
+            except ms_cert_lifecycle.PendingCertificateError as exc:
+                raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+            except CredentialVaultError as exc:
+                raise HTTPException(status_code=500, detail="Failed to decrypt the generated certificate") from exc
+            except Exception as exc:  # Redis down
+                raise HTTPException(status_code=503, detail="certificate store (Redis) unavailable") from exc
+            thumbprint = pending["thumbprint"]
+            managed = True
+            rotation = {k: pending.get(k) for k in ("entra_tenant_id", "application_object_id") if pending.get(k)}
+        else:
+            try:
+                pem, thumbprint = ms_client_assertion.normalize_certificate(
+                    payload.certificate_pem or "",
+                    payload.certificate_thumbprint or "",
+                    payload.private_key_password or "",
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        not_after = ms_cert_lifecycle.not_after_of(pem)
         to_encrypt = pem
     elif payload.client_secret:
         to_encrypt = payload.client_secret
@@ -614,6 +645,9 @@ async def upsert_oauth_app(
             client_secret_vault=encrypted_secret,
             client_certificate_vault=encrypted_cert,
             client_certificate_thumbprint=thumbprint,
+            client_certificate_not_after=not_after,
+            client_certificate_managed=managed,
+            client_certificate_rotation=rotation,
             authorize_url=payload.authorize_url,
             token_url=payload.token_url,
             scopes=payload.scopes,
@@ -626,6 +660,9 @@ async def upsert_oauth_app(
         existing.client_secret_vault = encrypted_secret
         existing.client_certificate_vault = encrypted_cert
         existing.client_certificate_thumbprint = thumbprint
+        existing.client_certificate_not_after = not_after
+        existing.client_certificate_managed = managed
+        existing.client_certificate_rotation = rotation
         existing.authorize_url = payload.authorize_url
         existing.token_url = payload.token_url
         existing.scopes = payload.scopes
@@ -643,6 +680,33 @@ async def upsert_oauth_app(
         },
     )
     return _app_view(row)
+
+
+@router.get("/app/{connector_type}/certificate.cer")
+async def download_oauth_app_certificate(
+    connector_type: str,
+    current_user: Annotated[AuthUser, Depends(require_permission("connectors:read"))],
+    db: DBSession,
+) -> Response:
+    """The OAuth app's current public certificate (DER .cer) — never the key."""
+    safe_type = _safe_connector_type(connector_type)
+    row = (
+        await db.execute(
+            select(OAuthAppCredential).where(
+                OAuthAppCredential.tenant_id == current_user.tenant_id,
+                OAuthAppCredential.connector_type == safe_type,
+            )
+        )
+    ).scalar_one_or_none()
+    if row is None or not row.client_certificate_vault:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No certificate registered for this OAuth app")
+    try:
+        cert = ms_cert_lifecycle.certificate_of(get_vault().decrypt(row.client_certificate_vault))
+    except CredentialVaultError as exc:
+        raise HTTPException(status_code=500, detail="Failed to decrypt the stored certificate") from exc
+    if cert is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Only a private key is stored for this OAuth app")
+    return cer_response(cert, f"aisoc-oauth-{safe_type}-{ms_cert_lifecycle.thumbprint(cert)[:8]}")
 
 
 @router.delete("/app/{connector_type}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)

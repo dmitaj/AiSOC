@@ -40,6 +40,7 @@ from app.services.scim.resources import error_response as scim_error_response
 from app.workers.approval_expiry import run_forever as run_approval_expiry
 from app.workers.autonomy_drift import run_forever as run_autonomy_drift
 from app.workers.hunt_scheduler import run_forever as run_hunt_scheduler
+from app.workers.ms_cert_rotation import run_forever as run_ms_cert_rotation
 from app.workers.oauth_refresh import run_forever as run_oauth_refresh
 from app.workers.outbound_webhook_delivery import run_forever as run_outbound_webhook_delivery
 from app.workers.phishing_report_intake import run_forever as run_phishing_report_intake
@@ -412,6 +413,23 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         except Exception as exc:
             logger.warning("oauth_refresh worker failed to start", error=str(exc))
 
+    # Daily roll of AiSOC-generated Entra app certificates (Graph addKey /
+    # removeKey). Lease-guarded like oauth_refresh: one replica rotates.
+    ms_cert_rotation_task: asyncio.Task | None = None
+    if settings.MS_CERT_ROTATION_WORKER_ENABLED:
+        try:
+            ms_cert_rotation_task = asyncio.create_task(
+                _run_guarded_scheduler_worker(
+                    job_name="ms_cert_rotation",
+                    ttl_seconds=_OAUTH_REFRESH_LOCK_TTL_SECONDS,
+                    worker=run_ms_cert_rotation,
+                ),
+                name="ms_cert_rotation_worker",
+            )
+            logger.info("ms_cert_rotation worker started")
+        except Exception as exc:
+            logger.warning("ms_cert_rotation worker failed to start", error=str(exc))
+
     # WS-G2: Weekly executive digest auto-generation worker. Generates a
     # PDF (or HTML fallback) digest for every active tenant every Monday at
     # 00:xx UTC and persists a ReportArtefact row.
@@ -678,6 +696,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             logger.debug("oauth_refresh worker cancelled during shutdown")
         except Exception as exc:
             logger.warning("oauth_refresh worker shutdown error", error=type(exc).__name__)
+
+    if ms_cert_rotation_task is not None and not ms_cert_rotation_task.done():
+        ms_cert_rotation_task.cancel()
+        try:
+            await ms_cert_rotation_task
+        except asyncio.CancelledError:
+            logger.debug("ms_cert_rotation worker cancelled during shutdown")
+        except Exception as exc:
+            logger.warning("ms_cert_rotation worker shutdown error", error=type(exc).__name__)
 
     if weekly_digest_task is not None and not weekly_digest_task.done():
         weekly_digest_task.cancel()
