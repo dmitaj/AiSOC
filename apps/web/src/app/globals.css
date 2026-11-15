@@ -198,6 +198,19 @@ html {
   [class*="bg-gray-"], [class*="bg-slate-"], [class*="bg-zinc-"],
   [class*="bg-neutral-"], [class*="bg-stone-"], [class*="bg-surface"],
   [class*="bg-white/"], [class*="bg-black/"], [class*="bg-transparent"]
+),
+/* Same rule for the hover variants (cards that brighten their title on hover). */
+.hover\:text-white:hover:is(
+  :not([class*="bg-"]),
+  [class*="bg-gray-"], [class*="bg-slate-"], [class*="bg-zinc-"],
+  [class*="bg-neutral-"], [class*="bg-stone-"], [class*="bg-surface"],
+  [class*="bg-white/"], [class*="bg-black/"], [class*="bg-transparent"]
+),
+.group:hover .group-hover\:text-white:is(
+  :not([class*="bg-"]),
+  [class*="bg-gray-"], [class*="bg-slate-"], [class*="bg-zinc-"],
+  [class*="bg-neutral-"], [class*="bg-stone-"], [class*="bg-surface"],
+  [class*="bg-white/"], [class*="bg-black/"], [class*="bg-transparent"]
 ) {
   color: var(--bare-white, #fff);
 }
