@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **CrowdSec connector.** `crowdsec` reads alerts from a CrowdSec Local API
+  (LAPI). With a machine account (`cscli machines add`) it signs in at
+  `POST /v1/watchers/login` and reads `GET /v1/alerts`: the scenario becomes
+  the title and rule, the source IP, country and AS are lifted, the decision
+  type and duration become the action, and the first event's
+  `target_fqdn`, `http_path` and `http_status` are kept for reverse-proxy
+  scenarios. A ban is `high`, any other decision `medium`, a simulated alert
+  `low`; brute-force scenarios map to T1110 and scan/crawl/probe scenarios to
+  T1595. LAPI's `since` filters on when a bucket started filling, so a poll
+  always looks back at least an hour and drops re-read alerts by `id`; a poll
+  reads at most 500 alerts (LAPI has no continuation) and logs when that
+  binds. With only a bouncer key it reads `GET /v1/decisions/stream`
+  (decisions without scenario context). Read-only: nothing adds or removes a
+  decision. `ocsf_classes.go` files `crowdsec` at 2001 Security Finding.
+  Setup is on the new [CrowdSec](apps/docs/docs/connectors/crowdsec.md) page.
+
 - **`AISOC_LLM_THINKING` knob for thinking-tier models** (#1883). A
   thinking-tier model streams chain-of-thought into `reasoning_content` and
   it counts against `max_tokens` — measured live on the bundled gateway, a
