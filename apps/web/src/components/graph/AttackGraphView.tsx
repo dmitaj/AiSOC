@@ -591,7 +591,7 @@ export function AttackGraphView() {
           />
         ) : null}
         <div className="grid lg:grid-cols-[1fr_320px]">
-          <div className="relative h-[560px] bg-[#0a1120]">
+          <div data-theme="dark" className="relative h-[560px] bg-[#0a1120]">
             {graphState.isLoading ? (
               <div className="p-6 space-y-3">
                 <Skeleton className="h-4 w-40" />

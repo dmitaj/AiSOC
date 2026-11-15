@@ -12,8 +12,6 @@ const PREFERENCE_LABELS: Record<ThemePreference, string> = {
   system: 'Match system theme',
 };
 
-const PREFERENCE_ORDER: ThemePreference[] = ['dark', 'light', 'system'];
-
 function preferenceIcon(preference: ThemePreference) {
   switch (preference) {
     case 'light':
@@ -71,18 +69,17 @@ function preferenceIcon(preference: ThemePreference) {
 }
 
 /**
- * Compact tri-state toggle (dark → light → system → dark). Lives in the
+ * Compact light/dark toggle (flips the painted theme; `system` lives in Settings). Lives in the
  * TopBar so a buyer can flip themes without leaving whatever screen they
  * landed on. Keyboard-accessible (renders as a real `<button>`) and
  * announces the next state to screen readers via `aria-label`.
  */
 export function ThemeToggle({ className }: ThemeToggleProps) {
-  const { preference, toggle } = useTheme();
+  const { preference, resolved, toggle } = useTheme();
 
   // The button advertises the *next* state because that's what activating
   // it will do — clearer than describing the current one.
-  const idx = PREFERENCE_ORDER.indexOf(preference);
-  const next = PREFERENCE_ORDER[(idx + 1) % PREFERENCE_ORDER.length];
+  const next: ThemePreference = resolved === 'dark' ? 'light' : 'dark';
   const label = `Switch to ${PREFERENCE_LABELS[next].toLowerCase()}`;
 
   return (

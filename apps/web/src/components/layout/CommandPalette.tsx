@@ -235,7 +235,7 @@ export function CommandPalette() {
             animate={{ y: 0, opacity: 1, scale: 1 }}
             exit={{ y: -8, opacity: 0, scale: 0.98 }}
             transition={{ duration: 0.14, ease: 'easeOut' }}
-            className="relative w-full max-w-xl rounded-xl border border-gray-700/70 bg-[#0d121b] shadow-2xl shadow-black/50 overflow-hidden"
+            className="relative w-full max-w-xl rounded-xl border border-gray-700/70 bg-surface-raised shadow-2xl shadow-black/50 overflow-hidden"
           >
             <Command
               label="AiSOC command palette"

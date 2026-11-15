@@ -262,7 +262,7 @@ export function LiveFeedPanel() {
   const pill = statusToLabel(status, hasReal, showingDemo);
 
   return (
-    <div className="bg-[#111620] border border-gray-800/60 rounded-lg p-4">
+    <div className="bg-surface-card border border-gray-800/60 rounded-lg p-4">
       <div className="flex items-center justify-between mb-3">
         <h3 className="text-sm font-medium text-gray-200 flex items-center gap-2">
           <span

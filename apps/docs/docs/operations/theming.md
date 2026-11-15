@@ -1,9 +1,10 @@
 # Theming (light & dark)
 
-The AiSOC console ships dark-by-default and exposes a tri-state theme toggle in
-the top bar (**dark → light → system → dark**). Users who pick **system** get
-their OS-level `prefers-color-scheme` rendered, with live updates if they flip
-their OS theme without reloading.
+The AiSOC console ships dark-by-default and exposes a theme toggle in the top
+bar that flips between **light** and **dark** in one press. **System** (follow
+the OS-level `prefers-color-scheme`, with live updates if the OS theme flips
+without a reload) is chosen in Settings; pressing the toggle while on system
+switches to whichever explicit theme is not currently painted.
 
 This page is for operators and contributors who want to know how the theme
 system is wired together, why some surfaces deliberately don't flip, and how to
@@ -76,6 +77,28 @@ in-canvas DAG visualisation tuned for dark mode), wrap it in a
 decorative class. The marketing landing in `apps/web/src/app/page.tsx` does
 exactly this.
 
+## Raw palette utilities
+
+Many console surfaces predate the semantic palette and still use raw Tailwind
+palette classes written for dark mode (`bg-gray-900`, `text-gray-100`,
+`text-rose-200` on `bg-rose-500/10`, `text-red-300` on `bg-red-900`). Tailwind
+v4 resolves those through `--color-<hue>-<shade>`, so `globals.css` remaps the
+variables under `[data-theme="light"]`:
+
+- neutral ramps (`slate`, `gray`, `zinc`, `neutral`, `stone`) mirror fully
+  (`900` ↔ `100`, `400` ↔ `600`, `500` stays);
+- colour ramps, `brand` included, swap the pale and deep ends and keep
+  `500`/`600`, so solid buttons such as `bg-blue-600 text-white` are unchanged;
+- `text-white` with no `bg-*` on the same element, or on a neutral/translucent
+  one, renders as `fg-primary`; on a coloured `bg-*` (buttons, badges) it stays
+  white;
+- shadcn-style tokens (`bg-card`, `border-border`, `text-muted-foreground`,
+  `bg-primary`, …) map onto the surface/foreground tokens.
+
+`[data-theme="dark"]` restates Tailwind's defaults so a dark-locked boundary
+inside a light page keeps the real palette. Hex backgrounds (`bg-[#0d1117]`)
+are not remapped; use `bg-surface-*` for new code.
+
 ## Locked surfaces (today)
 
 These surfaces are deliberately dark-only in v1 and require a follow-up to
@@ -86,6 +109,7 @@ toggle in the chrome doesn't make them look broken.
 | --- | --- | --- |
 | `/` marketing landing | Hero/Architecture/Features ride a fixed dark gradient. | WS-F1 follow-up |
 | Playbook DAG canvas | `@xyflow/react` colors are tuned for dark mode. | WS-F1 follow-up |
+| Attack graph canvases (`AttackGraphView`, `RealtimeGraph`) | Node/edge colours are tuned for a dark canvas. | WS-F1 follow-up |
 
 ## Why the bootstrap script is render-blocking
 
