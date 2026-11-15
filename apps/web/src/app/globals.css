@@ -15,9 +15,10 @@
  *
  * The variables below cover the chrome surfaces a buyer encounters first
  * (body, AppShell, TopBar, Sidebar, marketing landing, dashboard welcome,
- * playbook gallery). The rest of the app is still dark-only by design —
- * see `apps/docs/docs/operations/theming.md` for the migration playbook
- * we use to roll surfaces over without a flag day.
+ * playbook gallery). Surfaces still on raw `gray-*` utilities flip through
+ * the mirrored gray ramp further down. See
+ * `apps/docs/docs/operations/theming.md` for the migration playbook we use to
+ * roll surfaces over to the semantic tokens without a flag day.
  *
  * The tokens are referenced directly by `tailwind.config.ts` so that any
  * Tailwind utility built on these palettes (e.g. `bg-surface-card`,

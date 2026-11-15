@@ -1,9 +1,10 @@
 # Theming (light & dark)
 
-The AiSOC console ships dark-by-default and exposes a tri-state theme toggle in
-the top bar (**dark → light → system → dark**). Users who pick **system** get
-their OS-level `prefers-color-scheme` rendered, with live updates if they flip
-their OS theme without reloading.
+The AiSOC console ships dark-by-default and exposes a theme toggle in the top
+bar that flips between **light** and **dark** in one press. **System** (follow
+the OS-level `prefers-color-scheme`, with live updates if the OS theme flips
+without a reload) is chosen in Settings; pressing the toggle while on system
+switches to whichever explicit theme is not currently painted.
 
 This page is for operators and contributors who want to know how the theme
 system is wired together, why some surfaces deliberately don't flip, and how to
@@ -75,6 +76,18 @@ in-canvas DAG visualisation tuned for dark mode), wrap it in a
 `data-theme="dark"` (or `="light"`) boundary instead of migrating every
 decorative class. The marketing landing in `apps/web/src/app/page.tsx` does
 exactly this.
+
+## Raw `gray-*` utilities
+
+Many console surfaces predate the semantic palette and still use raw Tailwind
+`gray-*` classes written for dark mode (`bg-gray-900`, `text-gray-100`, …).
+Tailwind v4 resolves those through `--color-gray-*`, so `globals.css` mirrors
+the gray ramp under `[data-theme="light"]` (`gray-900` ↔ `gray-100`, and so on;
+`gray-500` stays put) and restates Tailwind's defaults under
+`[data-theme="dark"]` so a dark-locked boundary inside a light page keeps the
+real ramp. Those surfaces therefore flip without being migrated. Other
+palettes (`slate`, `zinc`, and coloured text tuned for dark backgrounds such as
+`text-red-300`) are not mirrored, so prefer the semantic tokens for new code.
 
 ## Locked surfaces (today)
 

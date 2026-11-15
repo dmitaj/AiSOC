@@ -116,6 +116,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Light mode no longer renders dark-only surfaces as grey cards with
+  invisible text, and the theme toggle flips in one press.** Most console
+  pages use raw Tailwind `gray-*` utilities written for dark mode, so in light
+  mode `bg-gray-900/60` showed as a translucent grey slab and `text-gray-100`
+  headings vanished against it. Tailwind v4 resolves `gray-*` through
+  `--color-gray-*`, so `globals.css` now mirrors that ramp under
+  `[data-theme="light"]` (and restates the defaults under `[data-theme="dark"]`
+  so dark-locked boundaries keep the real ramp) — every such surface flips
+  without a per-component migration. The top-bar toggle cycled
+  dark → light → system; with a dark OS the system step painted dark again,
+  so getting back to light took two presses. It now flips the painted theme;
+  system stays selectable in Settings.
+
 - **An offline endpoint's late-uploaded ESET detections are swept, not
   skipped** (#1890). ESET filters `/v1/detections` on `occurTime` — when the
   detection happened on the device — so a laptop that spent the night
