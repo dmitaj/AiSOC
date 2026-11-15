@@ -77,17 +77,23 @@ in-canvas DAG visualisation tuned for dark mode), wrap it in a
 decorative class. The marketing landing in `apps/web/src/app/page.tsx` does
 exactly this.
 
-## Raw `gray-*` utilities
+## Raw palette utilities
 
 Many console surfaces predate the semantic palette and still use raw Tailwind
-`gray-*` classes written for dark mode (`bg-gray-900`, `text-gray-100`, …).
-Tailwind v4 resolves those through `--color-gray-*`, so `globals.css` mirrors
-the gray ramp under `[data-theme="light"]` (`gray-900` ↔ `gray-100`, and so on;
-`gray-500` stays put) and restates Tailwind's defaults under
-`[data-theme="dark"]` so a dark-locked boundary inside a light page keeps the
-real ramp. Those surfaces therefore flip without being migrated. Other
-palettes (`slate`, `zinc`, and coloured text tuned for dark backgrounds such as
-`text-red-300`) are not mirrored, so prefer the semantic tokens for new code.
+palette classes written for dark mode (`bg-gray-900`, `text-gray-100`,
+`text-rose-200` on `bg-rose-500/10`, `text-red-300` on `bg-red-900`). Tailwind
+v4 resolves those through `--color-<hue>-<shade>`, so `globals.css` remaps the
+variables under `[data-theme="light"]`:
+
+- neutral ramps (`slate`, `gray`, `zinc`, `neutral`, `stone`) mirror fully
+  (`900` ↔ `100`, `400` ↔ `600`, `500` stays);
+- colour ramps, `brand` included, swap the pale and deep ends and keep
+  `500`/`600`, so solid buttons such as `bg-blue-600 text-white` are unchanged;
+- a bare `text-white` (no `bg-*` on the same element) renders as `fg-primary`.
+
+`[data-theme="dark"]` restates Tailwind's defaults so a dark-locked boundary
+inside a light page keeps the real palette. Hex backgrounds (`bg-[#0d1117]`)
+are not remapped; use `bg-surface-*` for new code.
 
 ## Locked surfaces (today)
 
