@@ -225,6 +225,9 @@ class TestUnorderedSourcesDoNotCarryAWatermark:
     UNORDERED = {
         "aws_cloudtrail_s3": ("object_key",),
         "gcp_pubsub": ("record_id",),
+        # LAPI's `since` filters on start_at, not on when the alert was
+        # recorded, so a time watermark would drop a slow-burn alert.
+        "crowdsec": ("id",),
     }
 
     @pytest.mark.parametrize("connector_id", sorted(UNORDERED))

@@ -41,6 +41,7 @@ from app.connectors.cloudflare_zt import CloudflareZTConnector
 from app.connectors.confluence_audit import ConfluenceAuditConnector
 from app.connectors.cortex_xdr import CortexXDRConnector
 from app.connectors.cortex_xsiam import CortexXSIAMConnector
+from app.connectors.crowdsec import CrowdSecConnector
 from app.connectors.crowdstrike import CrowdStrikeConnector
 from app.connectors.darktrace import DarktraceConnector
 from app.connectors.datadog import DatadogConnector
@@ -147,6 +148,7 @@ _CONNECTOR_CLASSES: tuple[type[BaseConnector], ...] = (
     ConfluenceAuditConnector,
     CortexXDRConnector,
     CortexXSIAMConnector,
+    CrowdSecConnector,
     CrowdStrikeConnector,
     DarktraceConnector,
     DatadogConnector,
@@ -284,6 +286,7 @@ __all__ = [
     "ConnectorSchema",
     "CortexXDRConnector",
     "CortexXSIAMConnector",
+    "CrowdSecConnector",
     "CrowdStrikeConnector",
     "DatadogCloudSIEMConnector",
     "DatadogConnector",

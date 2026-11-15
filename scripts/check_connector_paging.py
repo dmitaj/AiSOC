@@ -132,6 +132,11 @@ _PAGING_HELPERS = {"read_link_header_pages", "read_linked_pages", "read_offset_p
 _REVIEWED: dict[str, str] = {
     "auditd": "reads a local file by byte cursor; `since_seconds` is explicitly unused, so there is no vendor window to truncate.",
     "kubernetes_audit": "file_tail mode reads by byte cursor and webhook mode is pushed to; neither asks a vendor for a page.",
+    "crowdsec": (
+        "LAPI `GET /v1/alerts` takes `limit` but has no offset or continuation token, so there is nothing to follow. "
+        "The request asks for 500 and logs `crowdsec.alerts_capped` when the cap binds; a local LAPI raises far fewer "
+        "alerts than that per hour, since one alert is a whole overflowed bucket, not one event."
+    ),
     "azure_event_hubs": (
         "deliberate exception, pinned by test. It re-lists a never-drained blob container from the start on every poll and "
         "de-duplicates by identity; a bounded identity set would make it re-emit forever. Do not 'fix' by symmetry."

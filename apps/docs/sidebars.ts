@@ -117,6 +117,7 @@ const sidebars: SidebarsConfig = {
         "connectors/confluence-audit",
         "connectors/cortex-xdr",
         "connectors/cortex-xsiam",
+        "connectors/crowdsec",
         "connectors/crowdstrike",
         "connectors/darktrace",
         "connectors/datadog",

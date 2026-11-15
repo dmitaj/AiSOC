@@ -1,0 +1,36 @@
+id: crowdsec
+name: CrowdSec Connector
+version: "1.0.0"
+plugin_type: connector
+tier: stable
+description: >
+  CrowdSec alerts and decisions from a Local API (LAPI): the scenario that
+  fired, the source IP with its AS and country, and the ban or captcha
+  decision taken. Machine login for full alerts, or a bouncer API key for
+  decisions only. Read-only; nothing here adds or deletes a decision.
+author: AiSOC Core Team
+tags: [network, ips, crowdsec, decisions, reverse-proxy]
+homepage: https://github.com/beenuar/AiSOC/tree/main/services/connectors/app/connectors/crowdsec.py
+license: MIT
+min_aisoc_version: "23.5.0"
+config_schema:
+  type: object
+  required: [lapi_url]
+  properties:
+    lapi_url:
+      type: string
+      description: Base URL of the CrowdSec Local API (default port 8080).
+    machine_id:
+      type: string
+      description: Machine created with `cscli machines add`. Needed for alerts.
+    password:
+      type: string
+      description: Password of that machine.
+      secret: true
+    api_key:
+      type: string
+      description: Bouncer API key from `cscli bouncers add`. Decisions only, used when no machine is configured.
+      secret: true
+    verify_tls:
+      type: boolean
+      description: Verify the LAPI TLS certificate.
