@@ -98,7 +98,8 @@ def test_severity_and_technique_without_a_ban() -> None:
     assert c.normalize({**_ALERT, "simulated": True})["severity"] == "low"
     other = c.normalize({**_ALERT, "decisions": None, "scenario": "crowdsecurity/ssh-slow-bf"})
     assert "action" not in other
-    assert "mitre_techniques" not in c.normalize({**_ALERT, "scenario": "crowdsecurity/CVE-2022-26134"})
+    assert c.normalize({**_ALERT, "scenario": "crowdsecurity/CVE-2022-26134"})["mitre_techniques"] == ["T1190"]
+    assert "mitre_techniques" not in c.normalize({**_ALERT, "scenario": "crowdsecurity/http-bad-user-agent"})
 
 
 @pytest.mark.asyncio
@@ -162,3 +163,58 @@ async def test_bouncer_key_streams_decisions_then_only_the_delta() -> None:
         "high",
         ["T1595"],
     )
+
+
+# Shapes observed on a live LAPI (v1.6): community (CAPI) and subscribed-list
+# pulls are recorded as alerts with no source and thousands of decisions.
+_CAPI_PULL: dict[str, Any] = {
+    "id": 4065,
+    "scenario": "update : +2590/-0 IPs",
+    "source": {"scope": "lists:firehol_cruzit_web_attacks", "value": "lists:firehol_cruzit_web_attacks"},
+    "decisions": [{"id": n, "type": "ban", "scope": "Ip", "value": f"192.0.2.{n}", "origin": "lists"} for n in range(3)],
+}
+
+_VPATCH: dict[str, Any] = {
+    "id": 4066,
+    "scenario": "crowdsecurity/vpatch-git-config",
+    "source": {"scope": "Ip", "value": "198.51.100.7", "ip": "198.51.100.7", "cn": "US"},
+    "events": [{"meta": [{"key": "target_fqdn", "value": "git.example.com"}, {"key": "uri", "value": "/.git/config"}]}],
+    "decisions": [],
+}
+
+
+@pytest.mark.asyncio
+async def test_blocklist_pulls_are_not_raised_and_capi_is_excluded_upstream() -> None:
+    requests, transport = _lapi(alerts=lambda r: httpx.Response(200, json=[_CAPI_PULL, _VPATCH]))
+    [event] = await _machine(transport).fetch_alerts(300)
+
+    [alerts_request] = [r for r in requests if r.url.path == "/v1/alerts"]
+    assert alerts_request.url.params["include_capi"] == "false"
+    assert event["external_id"] == "4066"
+
+
+def test_appsec_uri_is_the_http_path_and_vpatch_maps_to_t1190() -> None:
+    event = _machine(httpx.MockTransport(lambda r: httpx.Response(404))).normalize(_VPATCH)
+    assert (event["http_path"], event["target_host"], event["severity"], event["mitre_techniques"]) == (
+        "/.git/config",
+        "git.example.com",
+        "medium",
+        ["T1190"],
+    )
+
+
+@pytest.mark.asyncio
+async def test_bouncer_stream_is_narrowed_to_local_decisions() -> None:
+    capi = {"id": 1, "type": "ban", "scope": "Ip", "value": "192.0.2.1", "origin": "CAPI", "scenario": "http:scan"}
+    local = {"id": 2, "type": "ban", "scope": "Ip", "value": "198.51.100.4", "origin": "crowdsec", "scenario": "crowdsecurity/http-probing"}
+    seen: list[httpx.Request] = []
+
+    def stream(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"new": [capi, local], "deleted": []})
+
+    _, transport = _lapi(stream=stream)
+    events = await CrowdSecConnector("http://lapi", api_key="k", transport=transport).fetch_alerts(300)
+
+    assert seen[0].url.params["origins"] == "crowdsec,cscli"
+    assert [e["external_id"] for e in events] == ["decision-2"]

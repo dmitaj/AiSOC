@@ -59,7 +59,17 @@ _TECHNIQUES = (
     ("crawl", "T1595"),
     ("enum", "T1595"),
     ("sensitive-files", "T1595"),
+    ("vpatch", "T1190"),
+    ("cve", "T1190"),
 )
+
+#: Decision origins that are blocklist imports, not detections on this host.
+#: The Central API pushes ~15k community IPs and each subscribed list a few
+#: thousand, as "update : +N IPs" alerts with no source; as alerts they are noise.
+_BLOCKLIST_ORIGINS = frozenset({"capi", "lists"})
+
+#: Origins the bouncer stream is narrowed to: local detections and manual bans.
+_LOCAL_ORIGINS = "crowdsec,cscli"
 
 
 class CrowdSecError(RuntimeError):
@@ -184,7 +194,9 @@ class CrowdSecConnector(BaseConnector):
             lookback = max(int(since_seconds), _MIN_LOOKBACK_SECONDS)
             try:
                 response = await client.get(
-                    f"{self._base_url}/v1/alerts", params={"since": f"{lookback}s", "limit": _LIMIT}, headers=headers
+                    f"{self._base_url}/v1/alerts",
+                    params={"since": f"{lookback}s", "limit": _LIMIT, "include_capi": "false"},
+                    headers=headers,
                 )
             except httpx.HTTPError as exc:
                 raise CrowdSecError(f"CrowdSec LAPI could not be reached at {self._base_url}: {exc}") from exc
@@ -195,6 +207,8 @@ class CrowdSecConnector(BaseConnector):
             raise CrowdSecError(f"CrowdSec answered HTTP {response.status_code} to GET /v1/alerts: {response.text[:300]}")
         body = _json(response)
         alerts = [a for a in body if isinstance(a, dict)] if isinstance(body, list) else []
+        # `include_capi=false` already drops these; filtered again for LAPIs that ignore it.
+        alerts = [a for a in alerts if not _is_blocklist_import(a)]
         if len(alerts) >= _LIMIT:
             logger.warning(
                 "crowdsec.alerts_capped", limit=_LIMIT, detail="LAPI has no continuation; older alerts in the window are not read"
@@ -205,7 +219,7 @@ class CrowdSecConnector(BaseConnector):
         try:
             response = await client.get(
                 f"{self._base_url}/v1/decisions/stream",
-                params={"startup": "false" if self._streaming else "true"},
+                params={"startup": "false" if self._streaming else "true", "origins": _LOCAL_ORIGINS},
                 headers={"X-Api-Key": self._api_key},
             )
         except httpx.HTTPError as exc:
@@ -214,7 +228,9 @@ class CrowdSecConnector(BaseConnector):
             raise CrowdSecError(f"CrowdSec answered HTTP {response.status_code} to GET /v1/decisions/stream: {response.text[:300]}")
         self._streaming = True
         new = _object(_json(response)).get("new")
-        return [self.normalize_decision(d) for d in new if isinstance(d, dict)] if isinstance(new, list) else []
+        if not isinstance(new, list):
+            return []
+        return [self.normalize_decision(d) for d in new if isinstance(d, dict) and _text(d.get("origin")).lower() not in _BLOCKLIST_ORIGINS]
 
     def normalize(self, raw: dict[str, Any]) -> dict[str, Any]:
         """Canonical envelope for an alert, with the vendor record under `raw_event`."""
@@ -278,8 +294,21 @@ def _first_event_meta(events: Any) -> dict[str, Any]:
     if not isinstance(events, list) or not events or not isinstance(events[0], dict):
         return {}
     meta = {m.get("key"): m.get("value") for m in events[0].get("meta") or [] if isinstance(m, dict)}
-    out = {"target_host": meta.get("target_fqdn"), "http_path": meta.get("http_path"), "http_status": meta.get("http_status")}
+    out = {
+        "target_host": meta.get("target_fqdn"),
+        # Log-parser scenarios carry `http_path`; AppSec (vpatch-*) carries `uri`.
+        "http_path": meta.get("http_path") or meta.get("uri"),
+        "http_status": meta.get("http_status"),
+    }
     return {k: v for k, v in out.items() if v}
+
+
+def _is_blocklist_import(alert: dict[str, Any]) -> bool:
+    """A community/list blocklist pull: no source IP and only CAPI/list decisions."""
+    if _text(_object(alert.get("source")).get("ip")):
+        return False
+    origins = {_text(d.get("origin")).lower() for d in alert.get("decisions") or [] if isinstance(d, dict)}
+    return bool(origins) and origins <= _BLOCKLIST_ORIGINS
 
 
 def _techniques(scenario: str) -> list[str]:

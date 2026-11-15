@@ -77,18 +77,25 @@ every active decision once. If both a machine and a key are set, the machine is 
 | `source.ip` (or `source.value` when scope is `Ip`) | `src_ip` |
 | `source.cn`, `source.as_number`, `source.as_name` | `country`, `asn`, `as_name` |
 | decision `type` and `duration` | `action`, `duration` |
-| first event meta `target_fqdn`, `http_path`, `http_status` | `target_host`, `http_path`, `http_status` (reverse-proxy logs, e.g. the npmplus collection) |
+| first event meta `target_fqdn`, `http_path` (or AppSec's `uri`), `http_status` | `target_host`, `http_path`, `http_status` (reverse-proxy logs such as the npmplus collection, and AppSec virtual patching) |
 | the whole alert | `raw_event` |
 
 Severity is `high` when a `ban` decision was taken, `medium` otherwise, and `low` for simulated alerts.
 MITRE technique is set only where the scenario name makes it obvious: brute force (`brute`, `-bf`,
-`stuffing`) is T1110, scans, probing, crawling and enumeration are T1595.
+`stuffing`) is T1110, scans, probing, crawling and enumeration are T1595, and virtual patching
+(`vpatch-*`) and CVE scenarios are T1190.
 
 :::caution Limits
 LAPI filters `since` on when an alert's bucket *started*, so the connector always looks back at least
 one hour and drops repeats by alert id. `GET /v1/alerts` has no continuation, so a poll reads at most
-500 alerts and logs `crowdsec.alerts_capped` if that binds. Alerts that CrowdSec imported from the
-community blocklist (CAPI) are excluded by LAPI by default.
+500 alerts and logs `crowdsec.alerts_capped` if that binds.
+
+LAPI records every community (CAPI) and subscribed-list blocklist pull as an alert
+(`update : +15000/-0 IPs`, no source, thousands of `ban` decisions) and returns them by default. The
+connector asks for `include_capi=false` and also drops any alert whose decisions all come from
+`CAPI` or `lists`, so only detections on your own CrowdSec are raised. With a bouncer key the
+decision stream is narrowed to `origins=crowdsec,cscli` for the same reason; without it the first
+poll would raise every blocklisted IP.
 :::
 
 Read-only: nothing here adds or removes a decision.
