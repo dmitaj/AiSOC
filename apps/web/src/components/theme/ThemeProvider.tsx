@@ -122,12 +122,11 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const toggle = useCallback(() => {
-    // Toggle cycles dark → light → system → dark so users can discover the
-    // OS-following option without an extra UI affordance.
-    setPreference(
-      preference === 'dark' ? 'light' : preference === 'light' ? 'system' : 'dark',
-    );
-  }, [preference, setPreference]);
+    // Flip what is painted. Cycling through `system` made the button look
+    // dead whenever the OS matched the current theme (dark → system=dark),
+    // so going back to light took two presses. `system` stays in Settings.
+    setPreference(resolved === 'dark' ? 'light' : 'dark');
+  }, [resolved, setPreference]);
 
   const value = useMemo<ThemeContextValue>(
     () => ({ preference, resolved, setPreference, toggle }),

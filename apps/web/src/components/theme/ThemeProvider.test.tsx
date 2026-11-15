@@ -87,7 +87,7 @@ describe('ThemeProvider', () => {
     expect(result.current.resolved).toBe('light');
   });
 
-  it('toggle cycles dark → light → system → dark', () => {
+  it('toggle flips between light and dark', () => {
     const { result } = renderHook(() => useTheme(), {
       wrapper: ({ children }) => <ThemeProvider>{children}</ThemeProvider>,
     });
@@ -96,9 +96,19 @@ describe('ThemeProvider', () => {
     act(() => result.current.toggle());
     expect(result.current.preference).toBe('light');
     act(() => result.current.toggle());
-    expect(result.current.preference).toBe('system');
-    act(() => result.current.toggle());
     expect(result.current.preference).toBe('dark');
+  });
+
+  it('toggle from "system" flips the painted theme in one press', () => {
+    window.localStorage.setItem(THEME_STORAGE_KEY, 'system');
+    setSystemPrefersLight(false);
+    const { result } = renderHook(() => useTheme(), {
+      wrapper: ({ children }) => <ThemeProvider>{children}</ThemeProvider>,
+    });
+
+    expect(result.current.resolved).toBe('dark');
+    act(() => result.current.toggle());
+    expect(result.current.resolved).toBe('light');
   });
 
   it('persists the choice to localStorage and writes data-theme onto <html>', () => {
