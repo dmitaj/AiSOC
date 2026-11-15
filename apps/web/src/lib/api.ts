@@ -3783,6 +3783,56 @@ export interface UpdateConnectorPayload {
   tags?: string[];
 }
 
+/** Body of `POST /api/v1/connectors/certificates`. */
+export interface GenerateCertificatePayload {
+  connector_type: string;
+  /** Shapes the certificate's CN only. */
+  name?: string | null;
+  /** Entra tenant id: CN suffix, and the tenant OAuth-app rotation requests a token from. */
+  entra_directory_id?: string | null;
+  /** The app registration's Object ID; lets auto-rotation work without a directory-read permission. */
+  application_object_id?: string | null;
+}
+
+/** Public half of a generated certificate. The private key never leaves the server. */
+export interface GeneratedCertificate {
+  /** Pass as `auth_config.certificate_pending_id` (connectors) or `certificate_pending_id` (OAuth app). */
+  pending_certificate_id: string;
+  thumbprint: string;
+  not_after: string;
+  certificate_pem: string;
+  certificate_der_base64: string;
+  pending_expires_in_seconds: number;
+}
+
+/** Non-secret certificate record the API keeps in `connector_config.certificate_lifecycle`. */
+export interface CertificateLifecycle {
+  managed?: boolean;
+  not_after?: string | null;
+  thumbprint?: string | null;
+  last_error?: string | null;
+  last_warning?: string | null;
+}
+
+/** Save `bytes` as a file through a temporary object URL. */
+export function saveBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+/** Download a public certificate (`.cer`, DER) from an authenticated endpoint. */
+async function downloadCer(path: string, filename: string): Promise<void> {
+  const resp = await apiFetch(path);
+  if (!resp.ok) throw new ApiError(`API ${resp.status} — ${path}`, resp.status, await resp.text().catch(() => ""));
+  saveBlob(await resp.blob(), filename);
+}
+
 export interface TestConnectorPayload {
   connector_type: string;
   auth_config?: Record<string, unknown>;
@@ -3877,6 +3927,20 @@ export const connectorsApi = {
     request<ConnectorTestResult>(`/api/v1/connectors/${id}/test`, {
       method: "POST",
     }),
+
+  /**
+   * Generate an Entra app certificate server-side. Returns only the public
+   * certificate plus a pending id the create / update / test call consumes.
+   */
+  generateCertificate: (payload: GenerateCertificatePayload) =>
+    request<GeneratedCertificate>("/api/v1/connectors/certificates", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  /** Download a saved connector's current public certificate as `.cer`. */
+  downloadCertificate: (id: string) =>
+    downloadCer(`/api/v1/connectors/${id}/certificate.cer`, `aisoc-connector-${id.slice(0, 8)}.cer`),
 
   /** Run "Test connection" with un-saved credentials from the wizard. */
   testInline: (payload: TestConnectorPayload) =>
@@ -4049,6 +4113,14 @@ export interface OAuthAppView {
   connector_type: string;
   client_id: string;
   has_secret: boolean;
+  /** Microsoft identity platform only: an app certificate is stored instead of a secret. */
+  has_certificate?: boolean;
+  certificate_thumbprint?: string | null;
+  certificate_not_after?: string | null;
+  /** AiSOC generated the certificate and rotates it before expiry. */
+  certificate_managed?: boolean;
+  certificate_rotation_error?: string | null;
+  certificate_rotation_warning?: string | null;
   authorize_url: string | null;
   token_url: string | null;
   scopes: string[] | null;
@@ -4065,7 +4137,16 @@ export interface OAuthAppView {
  */
 export interface OAuthAppRegistrationPayload {
   client_id: string;
-  client_secret: string;
+  /** Exactly one of `client_secret` / `certificate_pem` is required. */
+  client_secret?: string;
+  /** Microsoft identity platform only: PEM with the app certificate's private key (+ optionally the cert). */
+  certificate_pem?: string;
+  /** Hex SHA-1; required only when `certificate_pem` has no CERTIFICATE block. */
+  certificate_thumbprint?: string | null;
+  /** Only when the private key in `certificate_pem` is encrypted. Never stored. */
+  private_key_password?: string | null;
+  /** A certificate generated with `connectorsApi.generateCertificate`, instead of a pasted PEM. */
+  certificate_pending_id?: string | null;
   authorize_url?: string | null;
   token_url?: string | null;
   scopes?: string[] | null;
@@ -4120,6 +4201,13 @@ export const oauthApi = {
       method: "PUT",
       body: JSON.stringify(payload),
     }),
+
+  /** Download the OAuth app's current public certificate as `.cer`. */
+  downloadCertificate: (connectorType: string) =>
+    downloadCer(
+      `/api/v1/oauth/app/${encodeURIComponent(connectorType)}/certificate.cer`,
+      `aisoc-oauth-${connectorType}.cer`,
+    ),
 
   /** Unregister the tenant's OAuth client for a connector class. */
   deleteApp: (connectorType: string) =>

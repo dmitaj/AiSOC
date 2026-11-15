@@ -44,9 +44,11 @@ import {
   type ConnectorLastEvent,
   type ConnectorSchemaField,
   type ConnectorTestResult,
+  type GeneratedCertificate,
   type OAuthAppView,
   type TroubleshootResponse,
 } from '@/lib/api';
+import { CertificateGenerator, CertificateStatus } from './CertificateGenerator';
 
 /**
  * Turn a thrown request error into something an operator can act on.
@@ -147,6 +149,26 @@ function partitionFormValues(
     }
   }
   return { auth_config, connector_config };
+}
+
+/** Fields a generated certificate replaces (the paste-your-own-PEM path). */
+export const PASTED_CERT_FIELDS = new Set(['certificate_pem', 'certificate_thumbprint', 'private_key_password']);
+
+/**
+ * Point ``auth_config`` at a generated certificate: the API swaps the pending
+ * id for the parked key, so any pasted PEM fields are dropped.
+ */
+export function withGeneratedCertificate(
+  authConfig: Record<string, unknown>,
+  connectorConfig: Record<string, unknown>,
+  cert: GeneratedCertificate | null,
+): void {
+  if (!cert) return;
+  for (const k of PASTED_CERT_FIELDS) {
+    delete authConfig[k];
+    delete connectorConfig[k];
+  }
+  authConfig.certificate_pending_id = cert.pending_certificate_id;
 }
 
 interface FieldInputProps {
@@ -775,16 +797,27 @@ function OAuthPanel({
   );
 }
 
+/** Microsoft identity platform token hosts — the only ones that accept a certificate credential. */
+export function isMicrosoftTokenUrl(url: string | null | undefined): boolean {
+  try {
+    const host = new URL(url ?? '').hostname.toLowerCase();
+    return host === 'login.microsoftonline.com' || host === 'login.microsoft.com';
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Inline form for registering or rotating a tenant's OAuth client.
  *
  * The schema's :class:`OAuthHints` already declares default authorize and
  * token URLs plus the scope set we recommend, so we pre-fill those — the
- * operator only *has* to provide ``client_id`` and ``client_secret``. Any
+ * operator only *has* to provide ``client_id`` and ``client_secret`` (or,
+ * for Microsoft identity platform, an app certificate PEM). Any
  * non-defaults they paste become per-tenant overrides on the
  * ``oauth_app_credentials`` row.
  */
-function OAuthAppRegistrationForm({
+export function OAuthAppRegistrationForm({
   entry,
   existing,
   schemaHints,
@@ -799,6 +832,13 @@ function OAuthAppRegistrationForm({
 }) {
   const [clientId, setClientId] = useState(existing?.client_id ?? '');
   const [clientSecret, setClientSecret] = useState('');
+  const [credentialMode, setCredentialMode] = useState<'secret' | 'certificate'>(
+    existing?.has_certificate ? 'certificate' : 'secret',
+  );
+  const [certificatePem, setCertificatePem] = useState('');
+  const [certificateThumbprint, setCertificateThumbprint] = useState('');
+  const [privateKeyPassword, setPrivateKeyPassword] = useState('');
+  const [generatedCert, setGeneratedCert] = useState<GeneratedCertificate | null>(null);
   const [authorizeUrl, setAuthorizeUrl] = useState(
     existing?.authorize_url ?? schemaHints?.authorize_url ?? '',
   );
@@ -809,11 +849,20 @@ function OAuthAppRegistrationForm({
     (existing?.scopes ?? schemaHints?.scopes ?? []).join(' '),
   );
   const [saving, setSaving] = useState(false);
+  // Certificate credentials are Microsoft identity platform only; every
+  // other provider keeps the secret-only form.
+  const isMicrosoft = isMicrosoftTokenUrl(tokenUrl.trim() || schemaHints?.token_url);
+  const useCertificate = isMicrosoft && credentialMode === 'certificate';
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!clientId.trim() || !clientSecret.trim()) {
-      toast.error('Client ID and Client Secret are required');
+    const hasCertificate = Boolean(generatedCert) || Boolean(certificatePem.trim());
+    if (!clientId.trim() || !(useCertificate ? hasCertificate : clientSecret.trim())) {
+      toast.error(
+        useCertificate
+          ? 'Client ID and a certificate (generate one or paste a PEM) are required'
+          : 'Client ID and Client Secret are required',
+      );
       return;
     }
     setSaving(true);
@@ -824,7 +873,15 @@ function OAuthAppRegistrationForm({
         .filter(Boolean);
       await oauthApi.upsertApp(entry.connector_id, {
         client_id: clientId.trim(),
-        client_secret: clientSecret,
+        ...(useCertificate && generatedCert
+          ? { certificate_pending_id: generatedCert.pending_certificate_id }
+          : useCertificate
+          ? {
+              certificate_pem: certificatePem,
+              certificate_thumbprint: certificateThumbprint.trim() || null,
+              private_key_password: privateKeyPassword || null,
+            }
+          : { client_secret: clientSecret }),
         authorize_url: authorizeUrl.trim() || null,
         token_url: tokenUrl.trim() || null,
         scopes: scopes.length > 0 ? scopes : null,
@@ -833,6 +890,9 @@ function OAuthAppRegistrationForm({
       // it around once the vault has it. The next render of this form will
       // get a blank secret box, which is the right UX for "registered".
       setClientSecret('');
+      setCertificatePem('');
+      setPrivateKeyPassword('');
+      setGeneratedCert(null);
       toast.success('OAuth app registered');
       await onSaved();
     } catch (err) {
@@ -850,8 +910,34 @@ function OAuthAppRegistrationForm({
     <form onSubmit={handleSubmit} className="space-y-3 pt-1">
       <p className="text-xs text-gray-400 leading-relaxed">
         First time connecting? Register your OAuth app in {entry.connector_name} (using the
-        redirect URI shown in the docs), then paste the client credentials below.
+        redirect URI shown in the docs), then paste its client ID and a client secret
+        {isMicrosoft ? ' — or an app certificate (recommended for Entra ID) —' : ''} below.
       </p>
+      {isMicrosoft && (
+        <div
+          role="radiogroup"
+          aria-label="Client credential type"
+          className="inline-flex rounded-lg border border-surface-border bg-surface-card p-0.5"
+        >
+          {(['secret', 'certificate'] as const).map((mode) => (
+            <button
+              key={mode}
+              type="button"
+              role="radio"
+              aria-checked={credentialMode === mode}
+              onClick={() => setCredentialMode(mode)}
+              className={clsx(
+                'text-[11px] px-3 py-1 rounded-md transition-colors',
+                credentialMode === mode
+                  ? 'bg-surface-hover text-fg-primary font-semibold'
+                  : 'text-fg-muted hover:text-fg-secondary',
+              )}
+            >
+              {mode === 'secret' ? 'Client secret' : 'Certificate'}
+            </button>
+          ))}
+        </div>
+      )}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>
           <label className="block text-[11px] font-semibold text-gray-300 mb-1">
@@ -867,21 +953,109 @@ function OAuthAppRegistrationForm({
             autoComplete="off"
           />
         </div>
-        <div>
-          <label className="block text-[11px] font-semibold text-gray-300 mb-1">
-            Client Secret <span className="text-red-400">*</span>
-          </label>
-          <input
-            type="password"
-            value={clientSecret}
-            onChange={(e) => setClientSecret(e.target.value)}
-            placeholder={existing ? 'Re-enter to rotate' : '••••••••'}
-            className={clsx(fieldClass, 'font-mono')}
-            required
-            autoComplete="new-password"
-          />
-        </div>
+        {!useCertificate && (
+          <div>
+            <label className="block text-[11px] font-semibold text-gray-300 mb-1">
+              Client Secret <span className="text-red-400">*</span>
+            </label>
+            <input
+              type="password"
+              value={clientSecret}
+              onChange={(e) => setClientSecret(e.target.value)}
+              placeholder={existing ? 'Re-enter to rotate' : '••••••••'}
+              className={clsx(fieldClass, 'font-mono')}
+              required
+              autoComplete="new-password"
+            />
+          </div>
+        )}
       </div>
+      {useCertificate && existing?.has_certificate && (
+        <CertificateStatus
+          lifecycle={{
+            managed: existing.certificate_managed,
+            not_after: existing.certificate_not_after,
+            last_error: existing.certificate_rotation_error,
+            last_warning: existing.certificate_rotation_warning,
+          }}
+          onDownload={() => oauthApi.downloadCertificate(entry.connector_id)}
+        />
+      )}
+      {useCertificate && (
+        <CertificateGenerator
+          connectorType={entry.connector_id}
+          name={entry.connector_name}
+          generated={generatedCert}
+          onGenerated={setGeneratedCert}
+        />
+      )}
+      {useCertificate && !generatedCert && (
+        <div className="space-y-3">
+          <div>
+            <label
+              htmlFor="oauth-certificate-pem"
+              className="block text-[11px] font-semibold text-fg-secondary mb-1"
+            >
+              Certificate PEM (private key) <span className="text-red-400">*</span>
+            </label>
+            <textarea
+              id="oauth-certificate-pem"
+              value={certificatePem}
+              onChange={(e) => setCertificatePem(e.target.value)}
+              placeholder={
+                existing?.has_certificate
+                  ? 'Certificate stored. Paste a new PEM to rotate.'
+                  : '-----BEGIN PRIVATE KEY-----\n…\n-----END PRIVATE KEY-----\n-----BEGIN CERTIFICATE-----\n…'
+              }
+              rows={5}
+              className={clsx(fieldClass, 'font-mono')}
+              spellCheck={false}
+              autoComplete="off"
+              required
+            />
+            <p className="mt-1 text-[10px] text-fg-muted leading-relaxed">
+              The RSA private key for the certificate whose public .cer you uploaded under App
+              registrations → Certificates &amp; secrets. Include the CERTIFICATE block to skip the
+              thumbprint. Stored encrypted; never shown again.
+            </p>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label
+                htmlFor="oauth-certificate-thumbprint"
+                className="block text-[11px] font-semibold text-fg-secondary mb-1"
+              >
+                Thumbprint (if no CERTIFICATE block)
+              </label>
+              <input
+                id="oauth-certificate-thumbprint"
+                type="text"
+                value={certificateThumbprint}
+                onChange={(e) => setCertificateThumbprint(e.target.value)}
+                placeholder={existing?.certificate_thumbprint ?? 'SHA-1 hex, e.g. 3F2A…'}
+                className={clsx(fieldClass, 'font-mono')}
+                autoComplete="off"
+              />
+            </div>
+            <div>
+              <label
+                htmlFor="oauth-private-key-password"
+                className="block text-[11px] font-semibold text-fg-secondary mb-1"
+              >
+                Private key password (if encrypted)
+              </label>
+              <input
+                id="oauth-private-key-password"
+                type="password"
+                value={privateKeyPassword}
+                onChange={(e) => setPrivateKeyPassword(e.target.value)}
+                className={clsx(fieldClass, 'font-mono')}
+                autoComplete="new-password"
+              />
+            </div>
+          </div>
+        </div>
+      )}
 
       <details className="group">
         <summary className="cursor-pointer text-[11px] text-gray-500 hover:text-gray-300 select-none">
@@ -971,6 +1145,9 @@ interface ConfigStepProps {
   setInstanceName: (next: string) => void;
   /** Last test result, so we can render the AI troubleshooter inline. */
   testResult: ConnectorTestResult | null;
+  /** Certificate generated server-side for this form, if any. */
+  generatedCert: GeneratedCertificate | null;
+  setGeneratedCert: (cert: GeneratedCertificate | null) => void;
 }
 
 function ConfigStep({
@@ -980,9 +1157,44 @@ function ConfigStep({
   instanceName,
   setInstanceName,
   testResult,
+  generatedCert,
+  setGeneratedCert,
 }: ConfigStepProps) {
   const updateField = (name: string, next: string | number | boolean) => {
     setValues({ ...values, [name]: next });
+  };
+
+  // Schema field, plus — under the certificate PEM field — the "Generate
+  // certificate" alternative. A generated certificate hides the paste fields.
+  const renderField = (f: ConnectorSchemaField) => {
+    if (generatedCert && PASTED_CERT_FIELDS.has(f.name) && f.name !== 'certificate_pem') return null;
+    return (
+      <div key={f.name}>
+        {!(generatedCert && f.name === 'certificate_pem') && (
+          <>
+            <label className="block text-xs font-semibold text-gray-300 mb-1">
+              {f.label}
+              {f.required && <span className="text-red-400 ml-0.5">*</span>}
+            </label>
+            <FieldInput field={f} value={values[f.name]} onChange={(v) => updateField(f.name, v)} />
+            {f.help_text && (
+              <p className="mt-1 text-xs text-gray-500 leading-relaxed">{f.help_text}</p>
+            )}
+          </>
+        )}
+        {f.name === 'certificate_pem' && (
+          <div className="mt-2">
+            <CertificateGenerator
+              connectorType={entry.connector_id}
+              name={instanceName}
+              entraTenantId={String(values.tenant_id ?? '')}
+              generated={generatedCert}
+              onGenerated={setGeneratedCert}
+            />
+          </div>
+        )}
+      </div>
+    );
   };
 
   // Names of secret-typed fields, passed to the troubleshooter so the LLM
@@ -1036,38 +1248,10 @@ function ConfigStep({
           <summary className="cursor-pointer select-none px-4 py-3 text-xs font-semibold text-gray-400 hover:text-gray-200 transition-colors">
             Or use static credentials instead
           </summary>
-          <div className="px-4 pb-4 pt-1 space-y-5">
-            {entry.fields.map((f) => (
-              <div key={f.name}>
-                <label className="block text-xs font-semibold text-gray-300 mb-1">
-                  {f.label}
-                  {f.required && <span className="text-red-400 ml-0.5">*</span>}
-                </label>
-                <FieldInput
-                  field={f}
-                  value={values[f.name]}
-                  onChange={(v) => updateField(f.name, v)}
-                />
-                {f.help_text && (
-                  <p className="mt-1 text-xs text-gray-500 leading-relaxed">{f.help_text}</p>
-                )}
-              </div>
-            ))}
-          </div>
+          <div className="px-4 pb-4 pt-1 space-y-5">{entry.fields.map(renderField)}</div>
         </details>
       ) : (
-        entry.fields.map((f) => (
-          <div key={f.name}>
-            <label className="block text-xs font-semibold text-gray-300 mb-1">
-              {f.label}
-              {f.required && <span className="text-red-400 ml-0.5">*</span>}
-            </label>
-            <FieldInput field={f} value={values[f.name]} onChange={(v) => updateField(f.name, v)} />
-            {f.help_text && (
-              <p className="mt-1 text-xs text-gray-500 leading-relaxed">{f.help_text}</p>
-            )}
-          </div>
-        ))
+        entry.fields.map(renderField)
       )}
 
       {entry.docs_url && (
@@ -1326,6 +1510,7 @@ export function AddConnectorModal({
   // Connector instance returned by the create call — used by the verify
   // step to poll for the first event.
   const [createdConnector, setCreatedConnector] = useState<Connector | null>(null);
+  const [generatedCert, setGeneratedCert] = useState<GeneratedCertificate | null>(null);
 
   // Load catalog whenever the modal opens. We don't keep stale data around
   // between opens because the operator may have added a new connector class
@@ -1345,6 +1530,7 @@ export function AddConnectorModal({
     // shouldn't yank the operator's filter out from under them mid-flow.
     setCategoryFilter(activeCategory ?? null);
     setCreatedConnector(null);
+    setGeneratedCert(null);
 
     connectorsApi
       .catalog()
@@ -1403,6 +1589,7 @@ export function AddConnectorModal({
     setValues(buildInitialValues(entry.fields));
     setInstanceName(entry.connector_name);
     setTestResult(null);
+    setGeneratedCert(null);
     setStep('configure');
   };
 
@@ -1418,6 +1605,7 @@ export function AddConnectorModal({
     setTestResult(null);
     try {
       const { auth_config, connector_config } = partitionFormValues(selected.fields, values);
+      withGeneratedCertificate(auth_config, connector_config, generatedCert);
       const result = await connectorsApi.testInline({
         connector_type: selected.connector_id,
         auth_config,
@@ -1452,6 +1640,7 @@ export function AddConnectorModal({
     setSaving(true);
     try {
       const { auth_config, connector_config } = partitionFormValues(selected.fields, values);
+      withGeneratedCertificate(auth_config, connector_config, generatedCert);
       const created = await connectorsApi.create({
         name: instanceName.trim(),
         connector_type: selected.connector_id,
@@ -1640,6 +1829,8 @@ export function AddConnectorModal({
                     instanceName={instanceName}
                     setInstanceName={setInstanceName}
                     testResult={testResult}
+                    generatedCert={generatedCert}
+                    setGeneratedCert={setGeneratedCert}
                   />
                 )}
 

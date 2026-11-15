@@ -39,7 +39,8 @@ Endpoint contract
 
 * ``GET / PUT /api/v1/oauth/app/{connector_type}``
     Per-tenant OAuth client management. The PUT body carries client_id +
-    client_secret (encrypted-at-rest via the vault). The GET projects
+    client_secret, or (Microsoft identity platform) an app certificate
+    PEM, encrypted-at-rest via the vault. The GET projects
     only ``has_secret: bool`` so an admin can audit that the credential
     is wired without leaking it back to the browser.
 
@@ -68,18 +69,19 @@ from typing import Annotated, Any
 from urllib.parse import quote, urlencode, urlparse, urlsplit, urlunsplit
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, select
 
 from app.api.v1.deps import AuthUser, DBSession, require_permission
-from app.api.v1.endpoints.connectors import _validate_connector_type
+from app.api.v1.endpoints.connectors import _validate_connector_type, cer_response
 from app.core.config import settings
 from app.core.logging import safe_log_value
 from app.models.connector import Connector
 from app.models.oauth import OAuthAppCredential, OAuthState
 from app.security.credential_vault import CredentialVaultError, get_vault
+from app.services import ms_cert_lifecycle, ms_client_assertion
 
 logger = logging.getLogger(__name__)
 
@@ -455,7 +457,19 @@ class OAuthAppRegistration(BaseModel):
     """Payload for ``PUT /api/v1/oauth/app/{connector_type}``."""
 
     client_id: str = Field(min_length=1, max_length=512)
-    client_secret: str = Field(min_length=1, max_length=4096)
+    # Exactly one of client_secret / certificate_pem is required; the
+    # certificate wins if both are sent. Certificates are Microsoft
+    # identity platform only (RS256 client_assertion, RFC 7523).
+    client_secret: str | None = Field(default=None, max_length=4096)
+    certificate_pem: str | None = Field(default=None, max_length=32768)
+    # Hex SHA-1; only needed when the PEM carries no CERTIFICATE block.
+    certificate_thumbprint: str | None = Field(default=None, max_length=128)
+    # Used once to decrypt an encrypted key; never stored (the key is
+    # re-serialised unencrypted and then vault-encrypted).
+    private_key_password: str | None = Field(default=None, max_length=1024)
+    # A certificate AiSOC generated (``POST /connectors/certificates``) in
+    # place of a pasted PEM; it is rotated automatically before expiry.
+    certificate_pending_id: str | None = Field(default=None, max_length=64)
     authorize_url: str | None = Field(default=None, max_length=512)
     token_url: str | None = Field(default=None, max_length=512)
     scopes: list[str] | None = Field(default=None, max_length=64)
@@ -464,18 +478,46 @@ class OAuthAppRegistration(BaseModel):
 class OAuthAppView(BaseModel):
     """Read-only projection of an :class:`OAuthAppCredential`.
 
-    Never round-trips the secret — only ``has_secret: bool`` so the UI
-    can render a "credential present, last updated X days ago" badge.
+    Never round-trips the secret or certificate — only ``has_secret`` /
+    ``has_certificate`` so the UI can render a "credential present, last
+    updated X days ago" badge.
     """
 
     connector_type: str
     client_id: str
     has_secret: bool
+    has_certificate: bool = False
+    certificate_thumbprint: str | None = None
+    # Expiry, and whether AiSOC generated the certificate and so rotates it.
+    certificate_not_after: datetime | None = None
+    certificate_managed: bool = False
+    # Last auto-rotation failure / post-rotation warning, for the UI.
+    certificate_rotation_error: str | None = None
+    certificate_rotation_warning: str | None = None
     authorize_url: str | None
     token_url: str | None
     scopes: list[str] | None
     created_at: datetime
     updated_at: datetime
+
+
+def _app_view(row: OAuthAppCredential) -> OAuthAppView:
+    return OAuthAppView(
+        connector_type=row.connector_type,
+        client_id=row.client_id,
+        has_secret=bool(row.client_secret_vault),
+        has_certificate=bool(row.client_certificate_vault),
+        certificate_thumbprint=row.client_certificate_thumbprint,
+        certificate_not_after=row.client_certificate_not_after,
+        certificate_managed=bool(row.client_certificate_managed),
+        certificate_rotation_error=(row.client_certificate_rotation or {}).get("last_error"),
+        certificate_rotation_warning=(row.client_certificate_rotation or {}).get("last_warning"),
+        authorize_url=row.authorize_url,
+        token_url=row.token_url,
+        scopes=list(row.scopes) if row.scopes else None,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
 
 
 class OAuthStartResponse(BaseModel):
@@ -511,16 +553,7 @@ async def get_oauth_app(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="No OAuth app registered for this connector_type",
         )
-    return OAuthAppView(
-        connector_type=row.connector_type,
-        client_id=row.client_id,
-        has_secret=bool(row.client_secret_vault),
-        authorize_url=row.authorize_url,
-        token_url=row.token_url,
-        scopes=list(row.scopes) if row.scopes else None,
-        created_at=row.created_at,
-        updated_at=row.updated_at,
-    )
+    return _app_view(row)
 
 
 @router.put("/app/{connector_type}", response_model=OAuthAppView)
@@ -532,13 +565,69 @@ async def upsert_oauth_app(
 ) -> OAuthAppView:
     """Register or rotate the tenant's OAuth client for this connector class."""
     safe_type = _safe_connector_type(connector_type)
+    encrypted_secret: str | None = None
+    encrypted_cert: str | None = None
+    thumbprint: str | None = None
+    not_after: datetime | None = None
+    managed = False
+    rotation: dict[str, Any] = {}
+    if payload.certificate_pending_id or (payload.certificate_pem and payload.certificate_pem.strip()):
+        # Certificate auth is Microsoft identity platform only: the
+        # effective token URL (tenant override, else the catalog hint)
+        # must be an Entra host.
+        token_url = payload.token_url
+        if not token_url:
+            token_url = _hints_from_catalog(await _fetch_catalog_entry(safe_type, current_user.tenant_id)).get("token_url")
+        if not ms_client_assertion.is_microsoft_token_url(token_url):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"Certificate credentials are only supported for Microsoft identity platform "
+                    f"(Entra ID) OAuth apps; {safe_type} supports a client secret only."
+                ),
+            )
+        if payload.certificate_pending_id:
+            try:
+                pending = await ms_cert_lifecycle.load_pending(current_user.tenant_id, payload.certificate_pending_id, consume=True)
+                pem = get_vault().decrypt(pending["pem_vault"])
+            except ms_cert_lifecycle.PendingCertificateError as exc:
+                raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+            except CredentialVaultError as exc:
+                raise HTTPException(status_code=500, detail="Failed to decrypt the generated certificate") from exc
+            except Exception as exc:  # Redis down
+                raise HTTPException(status_code=503, detail="certificate store (Redis) unavailable") from exc
+            thumbprint = pending["thumbprint"]
+            managed = True
+            rotation = {k: pending.get(k) for k in ("entra_tenant_id", "application_object_id") if pending.get(k)}
+        else:
+            try:
+                pem, thumbprint = ms_client_assertion.normalize_certificate(
+                    payload.certificate_pem or "",
+                    payload.certificate_thumbprint or "",
+                    payload.private_key_password or "",
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        not_after = ms_cert_lifecycle.not_after_of(pem)
+        to_encrypt = pem
+    elif payload.client_secret:
+        to_encrypt = payload.client_secret
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Provide either client_secret or certificate_pem (Microsoft identity platform only).",
+        )
     try:
-        encrypted_secret = get_vault().encrypt(payload.client_secret)
+        encrypted = get_vault().encrypt(to_encrypt)
     except CredentialVaultError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to encrypt OAuth client secret",
+            detail="Failed to encrypt OAuth client credential",
         ) from exc
+    if thumbprint:
+        encrypted_cert = encrypted
+    else:
+        encrypted_secret = encrypted
 
     res = await db.execute(
         select(OAuthAppCredential).where(
@@ -554,6 +643,11 @@ async def upsert_oauth_app(
             connector_type=safe_type,
             client_id=payload.client_id,
             client_secret_vault=encrypted_secret,
+            client_certificate_vault=encrypted_cert,
+            client_certificate_thumbprint=thumbprint,
+            client_certificate_not_after=not_after,
+            client_certificate_managed=managed,
+            client_certificate_rotation=rotation,
             authorize_url=payload.authorize_url,
             token_url=payload.token_url,
             scopes=payload.scopes,
@@ -564,6 +658,11 @@ async def upsert_oauth_app(
     else:
         existing.client_id = payload.client_id
         existing.client_secret_vault = encrypted_secret
+        existing.client_certificate_vault = encrypted_cert
+        existing.client_certificate_thumbprint = thumbprint
+        existing.client_certificate_not_after = not_after
+        existing.client_certificate_managed = managed
+        existing.client_certificate_rotation = rotation
         existing.authorize_url = payload.authorize_url
         existing.token_url = payload.token_url
         existing.scopes = payload.scopes
@@ -580,16 +679,34 @@ async def upsert_oauth_app(
             "created": existing is None,
         },
     )
-    return OAuthAppView(
-        connector_type=row.connector_type,
-        client_id=row.client_id,
-        has_secret=bool(row.client_secret_vault),
-        authorize_url=row.authorize_url,
-        token_url=row.token_url,
-        scopes=list(row.scopes) if row.scopes else None,
-        created_at=row.created_at,
-        updated_at=row.updated_at,
-    )
+    return _app_view(row)
+
+
+@router.get("/app/{connector_type}/certificate.cer")
+async def download_oauth_app_certificate(
+    connector_type: str,
+    current_user: Annotated[AuthUser, Depends(require_permission("connectors:read"))],
+    db: DBSession,
+) -> Response:
+    """The OAuth app's current public certificate (DER .cer) — never the key."""
+    safe_type = _safe_connector_type(connector_type)
+    row = (
+        await db.execute(
+            select(OAuthAppCredential).where(
+                OAuthAppCredential.tenant_id == current_user.tenant_id,
+                OAuthAppCredential.connector_type == safe_type,
+            )
+        )
+    ).scalar_one_or_none()
+    if row is None or not row.client_certificate_vault:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No certificate registered for this OAuth app")
+    try:
+        cert = ms_cert_lifecycle.certificate_of(get_vault().decrypt(row.client_certificate_vault))
+    except CredentialVaultError as exc:
+        raise HTTPException(status_code=500, detail="Failed to decrypt the stored certificate") from exc
+    if cert is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Only a private key is stored for this OAuth app")
+    return cer_response(cert, f"aisoc-oauth-{safe_type}-{ms_cert_lifecycle.thumbprint(cert)[:8]}")
 
 
 @router.delete("/app/{connector_type}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
@@ -845,9 +962,8 @@ async def oauth_callback(
             detail="Missing authorization code on callback",
         )
 
-    # Resolve the per-tenant OAuth app and decrypt its client_secret for
-    # the token exchange. The vault round-trip is the only place we ever
-    # touch the secret in cleartext.
+    # Resolve the per-tenant OAuth app; its client secret / certificate is
+    # decrypted below, right before the token exchange.
     app_res = await db.execute(
         select(OAuthAppCredential).where(
             OAuthAppCredential.tenant_id == state_row.tenant_id,
@@ -863,23 +979,6 @@ async def oauth_callback(
             "missing_app_credential",
             "OAuth app credential disappeared mid-flow.",
         )
-    try:
-        client_secret = get_vault().decrypt(app_credential.client_secret_vault)
-    except CredentialVaultError as exc:
-        logger.error(
-            "oauth.callback.secret_decrypt_failed tenant=%s connector_type=%s err=%s",
-            state_row.tenant_id,
-            _safe_log_val(state_row.connector_type),
-            type(exc).__name__,
-        )
-        await db.execute(delete(OAuthState).where(OAuthState.state == state))
-        await db.commit()
-        return _callback_error_redirect(
-            return_to,
-            "vault_failure",
-            "Could not decrypt OAuth client secret; operator must rotate it.",
-        )
-
     # Re-fetch the catalog entry on callback so we (a) get fresh OAuth
     # hints for the token exchange and (b) recover the connector category
     # to stamp on the new row — same gate as POST /connectors.
@@ -900,12 +999,31 @@ async def oauth_callback(
     token_url = _resolve_token_url(app_credential, hints)
     redirect_uri = _resolve_redirect_uri()
 
+    # The vault round-trip is the only place we ever touch the client
+    # secret / certificate key in cleartext. A certificate yields an RS256
+    # client_assertion instead of client_secret.
+    try:
+        client_auth = ms_client_assertion.token_client_auth(get_vault(), app_credential, token_url)
+    except (CredentialVaultError, ValueError) as exc:
+        logger.error(
+            "oauth.callback.secret_decrypt_failed tenant=%s connector_type=%s err=%s",
+            state_row.tenant_id,
+            _safe_log_val(state_row.connector_type),
+            type(exc).__name__,
+        )
+        await db.execute(delete(OAuthState).where(OAuthState.state == state))
+        await db.commit()
+        return _callback_error_redirect(
+            return_to,
+            "vault_failure",
+            "Could not use the OAuth client credential; operator must rotate it.",
+        )
+
     body: dict[str, str] = {
         "grant_type": "authorization_code",
         "code": code,
         "redirect_uri": redirect_uri,
-        "client_id": app_credential.client_id,
-        "client_secret": client_secret,
+        **client_auth,
     }
     if state_row.code_verifier:
         body["code_verifier"] = state_row.code_verifier

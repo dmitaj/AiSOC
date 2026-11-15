@@ -65,7 +65,9 @@ _CTRL_RE = re.compile(r"[\x00-\x1f\x7f]")
 #: Keys stored on a connector instance that are scheduler knobs rather than
 #: constructor arguments. Passing them through raises ``TypeError`` and turns a
 #: working connector into a 422. Mirrors the filter in ``ConnectorScheduler``.
-_SCHEDULER_ONLY_CONFIG_KEYS = frozenset({"poll_interval_seconds", "checkpoint", "filter_rules"})
+#: ``certificate_lifecycle`` is the api's non-secret record of an Entra app
+#: certificate (expiry, managed-by-AiSOC, rotation state), not a constructor arg.
+_SCHEDULER_ONLY_CONFIG_KEYS = frozenset({"poll_interval_seconds", "checkpoint", "filter_rules", "certificate_lifecycle"})
 
 #: One answer for "no such instance", "not enabled" and "belongs to another
 #: tenant", with the requested id deliberately **not** echoed back.
