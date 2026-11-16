@@ -518,3 +518,16 @@ async def test_run_once_sweeps_tenant_by_tenant(vault: CredentialVault, monkeypa
     stats = await worker.run_once()
     assert stats == {"skipped": 1, "expiring_unmanaged": 1, "rotated": 0, "failed": 0}
     assert all("tenant_id" in s for s in statements[1:])
+
+
+def test_cert_connector_types_match_every_connector_with_a_certificate_field():
+    """Generation and rotation cover exactly the connectors whose schema takes a certificate."""
+    import json
+    from pathlib import Path
+
+    from app.services.ms_cert_lifecycle import CERT_CONNECTOR_TYPES
+
+    catalog = json.loads((Path(__file__).parents[1] / "app/data/connector_catalog_fallback.json").read_text())
+    entries = catalog["connectors"] if isinstance(catalog, dict) else catalog
+    with_cert = {e["connector_id"] for e in entries if any(f["name"] == "certificate_pem" for f in e["fields"])}
+    assert set(CERT_CONNECTOR_TYPES) == with_cert

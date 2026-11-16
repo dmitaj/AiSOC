@@ -1,7 +1,7 @@
 """Daily rotation of AiSOC-generated Entra app certificates.
 
-Covers both places a certificate lives: app-only ``azure_entra`` /
-``m365_audit`` connector instances (``auth_config.certificate_pem`` +
+Covers both places a certificate lives: app-only Microsoft connector
+instances (``CERT_CONNECTOR_TYPES``; ``auth_config.certificate_pem`` +
 ``connector_config.certificate_lifecycle``) and the hosted OAuth app
 (``oauth_app_credentials.client_certificate_*``). Only rows marked managed —
 the certificate was generated here — are rotated; a pasted certificate is

@@ -57,7 +57,9 @@ from app._vendor.ssrf_guard import SSRFError, validate_outbound_url
 from app.services.ms_client_assertion import ASSERTION_TYPE, _cert, client_assertion
 
 #: Connector types whose app-only auth accepts a certificate.
-CERT_CONNECTOR_TYPES = frozenset({"azure_entra", "m365_audit"})
+CERT_CONNECTOR_TYPES = frozenset(
+    {"azure_entra", "m365_audit", "azure_defender", "azure_activity", "azure_event_hubs", "microsoft_sentinel", "microsoft_intune"}
+)
 #: ``connector_config`` key holding non-secret certificate metadata. One key so
 #: the connectors service drops it from constructor kwargs with one entry.
 LIFECYCLE_KEY = "certificate_lifecycle"

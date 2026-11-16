@@ -84,7 +84,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instances are unchanged and the token scope of each connector is untouched.
   The same certificate option now covers Microsoft Defender (Graph security
   alerts), Azure Activity, Azure Event Hubs capture, Microsoft Sentinel and
-  Microsoft Intune.
+  Microsoft Intune, and in-console certificate generation and automatic
+  rotation apply to all of them.
 
 - **`AISOC_LLM_THINKING` knob for thinking-tier models** (#1883). A
   thinking-tier model streams chain-of-thought into `reasoning_content` and
