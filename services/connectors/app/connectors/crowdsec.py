@@ -237,7 +237,6 @@ class CrowdSecConnector(BaseConnector):
         source = _object(raw.get("source"))
         decisions = [d for d in raw.get("decisions") or [] if isinstance(d, dict)]
         scenario = _text(raw.get("scenario"))
-        ban = any(_text(d.get("type")).lower() == "ban" for d in decisions)
         event: dict[str, Any] = {
             "source": self.connector_id,
             "external_id": _text(raw.get("id")) or _text(raw.get("uuid")),
@@ -245,7 +244,7 @@ class CrowdSecConnector(BaseConnector):
             "description": _text(raw.get("message")),
             "created_at": _text(raw.get("created_at")) or _text(raw.get("start_at")),
             "rule_name": scenario,
-            "severity": "low" if raw.get("simulated") else ("high" if ban else "medium"),
+            "severity": "low" if raw.get("simulated") else "medium",
             "src_ip": _text(source.get("ip")) or (_text(source.get("value")) if _text(source.get("scope")).lower() == "ip" else ""),
             "source_scope": _text(source.get("scope")),
             "source_value": _text(source.get("value")),
@@ -276,7 +275,7 @@ class CrowdSecConnector(BaseConnector):
             "external_id": f"decision-{identity}",
             "title": f"CrowdSec {decision_type or 'decision'}: {value}" + (f" ({scenario})" if scenario else ""),
             "rule_name": scenario,
-            "severity": "high" if decision_type.lower() == "ban" else "medium",
+            "severity": "medium",
             "src_ip": value if scope.lower() == "ip" else "",
             "source_scope": scope,
             "source_value": value,

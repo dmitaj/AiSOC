@@ -79,7 +79,7 @@ async def test_alert_is_normalized() -> None:
 
     assert event["external_id"] == "42"
     assert event["title"] == "CrowdSec: crowdsecurity/http-bf-wordpress_bf"
-    assert event["severity"] == "high"  # a ban decision
+    assert event["severity"] == "medium"  # bans are medium; simulated alerts low
     assert event["src_ip"] == "203.0.113.9"
     assert (event["country"], event["asn"], event["as_name"]) == ("NL", "14061", "DIGITALOCEAN-ASN")
     assert (event["action"], event["duration"]) == ("ban", "3h59m")
@@ -160,7 +160,7 @@ async def test_bouncer_key_streams_decisions_then_only_the_delta() -> None:
     assert (event["external_id"], event["src_ip"], event["severity"], event["mitre_techniques"]) == (
         "decision-9",
         "198.51.100.4",
-        "high",
+        "medium",
         ["T1595"],
     )
 

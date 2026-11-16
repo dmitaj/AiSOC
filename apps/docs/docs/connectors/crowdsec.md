@@ -80,7 +80,7 @@ every active decision once. If both a machine and a key are set, the machine is 
 | first event meta `target_fqdn`, `http_path` (or AppSec's `uri`), `http_status` | `target_host`, `http_path`, `http_status` (reverse-proxy logs such as the npmplus collection, and AppSec virtual patching) |
 | the whole alert | `raw_event` |
 
-Severity is `high` when a `ban` decision was taken, `medium` otherwise, and `low` for simulated alerts.
+Severity is `medium` for every alert and decision (including bans), and `low` for simulated alerts.
 MITRE technique is set only where the scenario name makes it obvious: brute force (`brute`, `-bf`,
 `stuffing`) is T1110, scans, probing, crawling and enumeration are T1595, and virtual patching
 (`vpatch-*`) and CVE scenarios are T1190.
