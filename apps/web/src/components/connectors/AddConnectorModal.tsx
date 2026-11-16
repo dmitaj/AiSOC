@@ -1449,6 +1449,12 @@ export function AddConnectorModal({
       toast.error('Please give this connector an instance name');
       return;
     }
+    // Save is a type="button" outside native form validation, so check here.
+    const missing = selected.fields.filter((f) => f.required && String(values[f.name] ?? '').trim() === '');
+    if (missing.length) {
+      toast.error(`Required: ${missing.map((f) => f.label).join(', ')}`);
+      return;
+    }
     setSaving(true);
     try {
       const { auth_config, connector_config } = partitionFormValues(selected.fields, values);

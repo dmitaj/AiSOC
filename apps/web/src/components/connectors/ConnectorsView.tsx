@@ -28,7 +28,7 @@ import {
   type Connector,
   type ConnectorHealthSummary,
 } from '@/lib/api';
-import { AddConnectorModal } from './AddConnectorModal';
+import { AddConnectorModal, describeApiError } from './AddConnectorModal';
 import { EditConnectorModal } from './EditConnectorModal';
 import { ConnectorInstanceList } from './ConnectorInstanceList';
 import { InboxTokensPanel } from './InboxTokensPanel';
@@ -159,7 +159,7 @@ export function ConnectorsView() {
         toast.error(result.error ?? result.message ?? 'Connection test failed');
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Test request failed';
+      const msg = describeApiError(err, 'Test request failed');
       setTestResults((prev) => ({ ...prev, [id]: false }));
       toast.error(msg);
     } finally {
