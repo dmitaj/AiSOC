@@ -411,6 +411,10 @@ async def test_connector_connection(connector_id: str, payload: TestConnectionRe
     if not isinstance(result, dict):
         # Defensive: some connectors might return None on success. Coerce.
         result = {"success": bool(result), "connector": connector_id}
+    elif "success" not in result and "ok" in result:
+        # bamboohr, extrahop, microsoft_intune and rippling report ``ok``; the
+        # api reads ``success`` and treated their passing detail as an error.
+        result = {**result, "success": bool(result["ok"])}
     return result
 
 

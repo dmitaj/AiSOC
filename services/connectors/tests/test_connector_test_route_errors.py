@@ -108,3 +108,23 @@ async def test_an_unknown_connector_is_still_404(client: httpx.AsyncClient) -> N
             json={"auth_config": {}, "connector_config": {}},
         )
     assert r.status_code == 404, r.text
+
+
+@pytest.mark.asyncio
+async def test_a_connector_reporting_ok_is_a_success(client: httpx.AsyncClient) -> None:
+    """microsoft_intune (and three others) answer ``{"ok": True}``; the api reads ``success``."""
+    import respx
+
+    with respx.mock(assert_all_called=False) as mock:
+        mock.post(url__startswith="https://login.microsoftonline.com/").mock(
+            return_value=httpx.Response(200, json={"access_token": "a", "expires_in": 3600})
+        )
+        mock.get(url__startswith="https://graph.microsoft.com/").mock(return_value=httpx.Response(200, json={"value": []}))
+        async with client as c:
+            r = await c.post(
+                "/api/v1/connectors/microsoft_intune/test",
+                headers={"Authorization": f"Bearer {_console_jwt()}"},
+                json={"auth_config": {"client_secret": "s"}, "connector_config": {"tenant_id": "t", "client_id": "c"}},
+            )
+    assert r.status_code == 200, r.text
+    assert r.json()["success"] is True, r.text
