@@ -183,6 +183,48 @@ async def ml_status() -> dict[str, Any]:
 # a 403 rather than a selector for someone else's data.
 
 
+_SEVERITIES = ("critical", "high", "medium", "low", "info")
+
+
+def _iso(ts: Any) -> Any:
+    """Fusion appends ``Z`` to aware timestamps too (``+00:00Z``); keep one zone marker."""
+    if isinstance(ts, str) and ts.endswith("Z") and "+" in ts:
+        return ts[:-1]
+    return ts
+
+
+def _console_record(rec: dict[str, Any], threshold: float) -> dict[str, Any]:
+    """Fusion's EntityRiskRecord.to_dict() in the shape the console's EntityRiskRecord reads."""
+    severities = rec.get("severities") or {}
+    contributions = [
+        {
+            "alert_id": c.get("alert_id"),
+            "severity": c.get("severity"),
+            "raw_points": c.get("points"),
+            "observed_at": _iso(c.get("at")),
+            "title": c.get("detection"),
+        }
+        for c in rec.get("contributors") or []
+    ]
+    last_seen = _iso(rec.get("last_seen"))
+    score = float(rec.get("score") or 0)
+    return {
+        "tenant_id": rec.get("tenant_id"),
+        "entity_type": "ip" if rec.get("entity_type") == "src_ip" else rec.get("entity_type"),
+        "entity_value": rec.get("entity_value"),
+        "score": score,
+        "display_score": round(score),
+        "threshold": threshold,
+        "promoted": rec.get("promoted_at") is not None,
+        "promoted_at": _iso(rec.get("promoted_at")),
+        "last_seen": last_seen,
+        "first_seen": min((c["observed_at"] for c in contributions if c["observed_at"]), default=last_seen),
+        "contributions": contributions,
+        "severity_histogram": {k: int(severities.get(k, 0)) for k in _SEVERITIES},
+        "alert_count": rec.get("alert_count", 0),
+    }
+
+
 @router.get("/entity-risk/queue", summary="Top entities by risk score")
 async def entity_risk_queue(
     user: AuthUser,
@@ -201,7 +243,9 @@ async def entity_risk_queue(
         headers=_upstream_headers(scoped),
     )
     if upstream is not None:
-        return upstream
+        threshold = upstream.get("threshold", 80.0)
+        entities = [_console_record(e, threshold) for e in upstream.get("entities") or []]
+        return {**upstream, "entities": entities}
     raise HTTPException(status_code=503, detail="Fusion risk data is unavailable; no risk assessment was made.")
 
 
@@ -214,7 +258,15 @@ async def entity_risk_stats(user: AuthUser, tenant_id: UUID | None = None) -> di
         headers=_upstream_headers(scoped),
     )
     if upstream is not None:
-        return upstream
+        # Fusion's names -> the console's EntityRiskStats. alert_count is not
+        # tracked upstream, so it is omitted and the console sums the queue.
+        return {
+            "tenant_id": upstream.get("tenant_id"),
+            "threshold": upstream.get("threshold"),
+            "total": upstream.get("tracked_entities"),
+            "promoted": upstream.get("promoted_entities"),
+            "bands": upstream.get("score_bands"),
+        }
     raise HTTPException(status_code=503, detail="Fusion risk statistics are unavailable; counts are unknown.")
 
 
@@ -241,5 +293,6 @@ async def entity_risk_detail(
         headers=_upstream_headers(scoped),
     )
     if upstream is not None:
-        return upstream
+        stats = await _proxy_get("/entity-risk/stats", params={"tenant_id": str(scoped)}, headers=_upstream_headers(scoped))
+        return _console_record(upstream, (stats or {}).get("threshold", 80.0))
     raise HTTPException(status_code=503, detail="Fusion risk data is unavailable; the entity could not be checked.")
