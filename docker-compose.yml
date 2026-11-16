@@ -499,6 +499,8 @@ services:
       CONNECTORS_SERVICE_URL: ${CONNECTORS_SERVICE_URL:-http://connectors:8003}
       # The entity-risk queue on /alerts is proxied from fusion; unset, it is always 503.
       FUSION_URL: ${FUSION_URL:-http://fusion:8003}
+      # Public URL of this deployment; one-click OAuth redirects to <it>/api/v1/oauth/callback. Empty disables it.
+      OAUTH_PUBLIC_BASE_URL: ${OAUTH_PUBLIC_BASE_URL:-}
       # Where GET /api/v1/threat-intel/indicators is served from. The console
       # has called that path since the IOC inbox shipped and nothing answered
       # it; threatintel is in CORE now and this is the wire.

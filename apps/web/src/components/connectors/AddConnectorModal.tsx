@@ -1640,7 +1640,13 @@ export function AddConnectorModal({
     // Save is a type="button" outside native form validation, so check here.
     const missing = selected.fields.filter((f) => f.required && String(values[f.name] ?? '').trim() === '');
     if (missing.length) {
-      toast.error(`Required: ${missing.map((f) => f.label).join(', ')}`);
+      const fields = missing.map((f) => f.label).join(', ');
+      // With the one-click panel, Save is for the collapsed static form only.
+      toast.error(
+        selected.oauth?.supported_in_hosted
+          ? `Save uses static credentials (Required: ${fields}). To use OAuth, click "Connect with ${selected.connector_name}" instead.`
+          : `Required: ${fields}`,
+      );
       return;
     }
     setSaving(true);

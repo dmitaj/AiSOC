@@ -149,6 +149,9 @@ describe("Add connector: Generate certificate", () => {
 
   it("Discard returns to the paste form and sends no pending id", async () => {
     render(<AddConnectorModal open onClose={() => {}} primedConnectorId="azure_entra" />);
+    const textInputs = await screen.findAllByRole("textbox");
+    fireEvent.change(textInputs[1], { target: { value: "11111111-2222-3333-4444-555555555555" } });
+    fireEvent.change(textInputs[2], { target: { value: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" } });
     fireEvent.click(await screen.findByRole("button", { name: "Generate certificate" }));
     await screen.findByTestId("generated-certificate");
     fireEvent.click(screen.getByRole("button", { name: "Discard" }));
