@@ -15,8 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the title and rule, the source IP, country and AS are lifted, the decision
   type and duration become the action, and the first event's
   `target_fqdn`, `http_path` (AppSec's `uri`) and `http_status` are kept for
-  reverse-proxy and virtual-patching scenarios. A ban is `high`, any other
-  decision `medium`, a simulated alert `low`; brute-force scenarios map to
+  reverse-proxy and virtual-patching scenarios. Alerts and decisions,
+  bans included, are `medium` and a simulated alert `low`; brute-force scenarios map to
   T1110, scan/crawl/probe scenarios to T1595 and `vpatch-*`/CVE scenarios to
   T1190. Community and list blocklist pulls, which LAPI records as alerts
   (`update : +15000/-0 IPs`) and returns by default, are excluded with
