@@ -19,10 +19,10 @@
 | aws_guardduty | cloud | 3 | 1 | 1 | ✅ | ✅ | ✅ |
 | aws_security_hub | cloud | 3 | 1 | 3 | ✅ | ✅ | ✅ |
 | aws_vpc_flow | cloud | 6 | 1 | 2 | ✅ | ✅ | ✅ |
-| azure_activity | cloud | 4 | 1 | 1 | ✅ | ✅ | ✅ |
-| azure_defender | edr | 3 | 1 | 5 | ✅ | ✅ | ✅ |
+| azure_activity | cloud | 7 | 3 | 1 | ✅ | ✅ | ✅ |
+| azure_defender | edr | 6 | 3 | 5 | ✅ | ✅ | ✅ |
 | azure_entra | iam | 6 | 3 | 2 | ✅ | ✅ | ✅ |
-| azure_event_hubs | cloud | 6 | 1 | 2 | ✅ | ✅ | ✅ |
+| azure_event_hubs | cloud | 9 | 3 | 2 | ✅ | ✅ | ✅ |
 | bamboohr | hr | 3 | 1 | 1 | ✅ | ✅ | — |
 | box | saas | 1 | 1 | 3 | ✅ | ✅ | ✅ |
 | carbon_black | edr | 4 | 1 | 6 | ✅ | ✅ | ✅ |
@@ -63,8 +63,8 @@
 | lacework | cloud | 4 | 1 | 5 | ✅ | ✅ | ✅ |
 | llm_usage | saas | 4 | 1 | 2 | ✅ | ✅ | ✅ |
 | m365_audit | saas | 6 | 3 | 1 | ✅ | ✅ | ✅ |
-| microsoft_intune | mdm | 3 | 1 | 1 | ✅ | ✅ | — |
-| microsoft_sentinel | siem | 6 | 1 | 2 | ✅ | ✅ | ✅ |
+| microsoft_intune | mdm | 6 | 3 | 1 | ✅ | ✅ | — |
+| microsoft_sentinel | siem | 9 | 3 | 2 | ✅ | ✅ | ✅ |
 | mimecast | saas | 3 | 1 | 4 | ✅ | ✅ | ✅ |
 | netskope | network | 3 | 1 | 3 | ✅ | ✅ | ✅ |
 | oci | cloud | 6 | 1 | 3 | ✅ | ✅ | ✅ |

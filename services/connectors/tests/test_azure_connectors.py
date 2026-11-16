@@ -115,7 +115,7 @@ def test_azure_entra_normalize_risky_signin_maps_severity():
 
 
 def test_azure_activity_normalize_role_assignment_write_is_high():
-    connector = AzureActivityConnector(_TENANT, _CLIENT, _SECRET, _SUB)
+    connector = AzureActivityConnector(tenant_id=_TENANT, client_id=_CLIENT, client_secret=_SECRET, subscription_id=_SUB)
     raw = {
         "eventDataId": "act-1",
         "operationName": {
@@ -137,7 +137,7 @@ def test_azure_activity_normalize_role_assignment_write_is_high():
 
 
 def test_azure_activity_normalize_routine_read_is_info():
-    connector = AzureActivityConnector(_TENANT, _CLIENT, _SECRET, _SUB)
+    connector = AzureActivityConnector(tenant_id=_TENANT, client_id=_CLIENT, client_secret=_SECRET, subscription_id=_SUB)
     raw = {
         "eventDataId": "act-2",
         "operationName": {
@@ -277,7 +277,7 @@ async def test_azure_activity_test_connection_success():
         return_value=httpx.Response(200, json={"id": f"/subscriptions/{_SUB}", "displayName": "Production"})
     )
 
-    connector = AzureActivityConnector(_TENANT, _CLIENT, _SECRET, _SUB)
+    connector = AzureActivityConnector(tenant_id=_TENANT, client_id=_CLIENT, client_secret=_SECRET, subscription_id=_SUB)
     result = await connector.test_connection()
     assert result["success"] is True
     assert result["subscription_name"] == "Production"
@@ -292,7 +292,7 @@ async def test_azure_activity_fetch_alerts_handles_empty_response():
     activity_url = f"https://management.azure.com/subscriptions/{_SUB}/providers/Microsoft.Insights/eventtypes/management/values"
     respx.get(activity_url).mock(return_value=httpx.Response(200, json={"value": []}))
 
-    connector = AzureActivityConnector(_TENANT, _CLIENT, _SECRET, _SUB)
+    connector = AzureActivityConnector(tenant_id=_TENANT, client_id=_CLIENT, client_secret=_SECRET, subscription_id=_SUB)
     events = await connector.fetch_alerts(since_seconds=600)
     assert events == []
 
@@ -446,9 +446,34 @@ def _b64d(part: str) -> bytes:
 
 
 def _connector_cases():
+    """(factory(**credential_kwargs), mint_token(connector)) for every Microsoft client-credentials connector."""
+    from app.connectors.azure_activity import AzureActivityConnector
+    from app.connectors.azure_event_hubs import AzureEventHubsConnector
     from app.connectors.m365_audit import M365AuditConnector
+    from app.connectors.microsoft_intune import MicrosoftIntuneConnector
+    from app.connectors.microsoft_sentinel import MicrosoftSentinelConnector
 
-    return [AzureEntraConnector, M365AuditConnector]
+    async def event_hubs_token(conn):
+        async with httpx.AsyncClient() as client:
+            return await conn._authenticate(client)
+
+    base = {"tenant_id": _TENANT, "client_id": _CLIENT}
+
+    def plain(cls, **extra):
+        return (lambda **kw: cls(**base, **extra, **kw), lambda conn: conn._authenticate())
+
+    return [
+        plain(AzureEntraConnector),
+        plain(M365AuditConnector),
+        plain(AzureDefenderConnector),
+        plain(AzureActivityConnector, subscription_id=_SUB),
+        plain(MicrosoftSentinelConnector, subscription_id=_SUB, resource_group="rg", workspace="ws"),
+        (lambda **kw: AzureEventHubsConnector(**base, storage_account="acct", container="c", **kw), event_hubs_token),
+        (lambda **kw: MicrosoftIntuneConnector(**base, **kw), lambda conn: conn._access_token()),
+    ]
+
+
+_CASES = range(7)
 
 
 def _posted_form(route) -> dict[str, str]:
@@ -458,7 +483,7 @@ def _posted_form(route) -> dict[str, str]:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("cls_index", [0, 1])
+@pytest.mark.parametrize("cls_index", _CASES)
 @pytest.mark.parametrize("with_cert", [True, False])
 async def test_certificate_auth_sends_signed_client_assertion(cls_index, with_cert):
     import json
@@ -467,16 +492,15 @@ async def test_certificate_auth_sends_signed_client_assertion(cls_index, with_ce
     from cryptography.hazmat.primitives.asymmetric import padding
 
     pem, thumb_hex, cert = _make_cert_pem(with_cert=with_cert)
-    connector = _connector_cases()[cls_index](
-        tenant_id=_TENANT,
-        client_id=_CLIENT,
+    make, mint = _connector_cases()[cls_index]
+    connector = make(
         certificate_pem=pem,
         certificate_thumbprint="" if with_cert else thumb_hex.upper(),
     )
     token_url = f"https://login.microsoftonline.com/{_TENANT}/oauth2/v2.0/token"
     with respx.mock(assert_all_called=False) as mock:
         route = mock.post(token_url).mock(return_value=httpx.Response(200, json={"access_token": "tok"}))
-        assert await connector._authenticate() == "tok"
+        assert await mint(connector) == "tok"
 
     form = _posted_form(route)
     assert "client_secret" not in form
@@ -496,38 +520,40 @@ async def test_certificate_auth_sends_signed_client_assertion(cls_index, with_ce
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("cls_index", [0, 1])
+@pytest.mark.parametrize("cls_index", _CASES)
 async def test_secret_auth_unchanged(cls_index):
-    connector = _connector_cases()[cls_index](_TENANT, _CLIENT, _SECRET)
+    make, mint = _connector_cases()[cls_index]
+    connector = make(client_secret=_SECRET)
     with respx.mock() as mock:
         route = mock.post(f"https://login.microsoftonline.com/{_TENANT}/oauth2/v2.0/token").mock(
             return_value=httpx.Response(200, json={"access_token": "tok"})
         )
-        await connector._authenticate()
+        await mint(connector)
     form = _posted_form(route)
     assert form["client_secret"] == _SECRET
     assert "client_assertion" not in form
 
 
-@pytest.mark.parametrize("cls_index", [0, 1])
+@pytest.mark.parametrize("cls_index", _CASES)
 def test_certificate_wins_when_both_given_and_bad_config_refused(cls_index):
-    cls = _connector_cases()[cls_index]
+    make, _ = _connector_cases()[cls_index]
     pem, _, _ = _make_cert_pem()
-    assert cls(_TENANT, _CLIENT, _SECRET, certificate_pem=pem)._cert is not None
+    assert make(client_secret=_SECRET, certificate_pem=pem)._cert is not None
     with pytest.raises(ValueError, match="either client_secret or certificate_pem"):
-        cls(_TENANT, _CLIENT)
+        make()
     with pytest.raises(ValueError, match="PRIVATE KEY"):
-        cls(_TENANT, _CLIENT, certificate_pem="not a pem")
+        make(certificate_pem="not a pem")
     key_only, _, _ = _make_cert_pem(with_cert=False)
     with pytest.raises(ValueError, match="certificate_thumbprint is required"):
-        cls(_TENANT, _CLIENT, certificate_pem=key_only)
+        make(certificate_pem=key_only)
     with pytest.raises(ValueError, match="hex SHA-1"):
-        cls(_TENANT, _CLIENT, certificate_pem=key_only, certificate_thumbprint="zz")
+        make(certificate_pem=key_only, certificate_thumbprint="zz")
 
 
-@pytest.mark.parametrize("cls_index", [0, 1])
+@pytest.mark.parametrize("cls_index", _CASES)
 def test_schema_cert_fields_optional(cls_index):
-    fields = {f.name: f for f in _connector_cases()[cls_index].schema().fields}
+    make, _ = _connector_cases()[cls_index]
+    fields = {f.name: f for f in type(make(client_secret=_SECRET)).schema().fields}
     assert fields["client_secret"].required is False
     for name in ("certificate_pem", "certificate_thumbprint", "private_key_password"):
         assert fields[name].required is False

@@ -21,13 +21,16 @@ Entra sign-in logs, Entra audit logs and the Azure Activity log streamed to an E
 |-------|-------|------|----------|---------|-------|
 | `tenant_id` | Entra tenant ID | string | yes | — | — |
 | `client_id` | Application (client) ID | string | yes | — | — |
-| `client_secret` | Client secret | secret | yes | — | **encrypted at rest** |
+| `client_secret` | Client Secret | secret | no | — | **encrypted at rest** · Leave empty when using a certificate (recommended). Exactly one of secret or certificate is required. |
+| `certificate_pem` | Certificate PEM (private key) | secret | no | — | **encrypted at rest** · Recommended over a client secret. Paste a PEM containing the PRIVATE KEY (and optionally the CERTIFICATE) for the certificate whose public .cer you uploaded under Entra portal > App registrations > your app > Certificates & secrets. |
+| `certificate_thumbprint` | Certificate Thumbprint | string | no | — | SHA-1 thumbprint shown next to the certificate under App registrations > Certificates & secrets. Optional when the PEM above also contains the certificate. |
+| `private_key_password` | Private Key Password | secret | no | — | **encrypted at rest** · Only if the private key in the PEM is encrypted. |
 | `storage_account` | Capture storage account name | string | yes | — | The storage account the Event Hub's Capture writes to (the account name alone, not a URL). |
 | `container` | Capture container / filesystem | string | yes | — | The blob container Capture is configured to write into. |
 | `prefix` | Path prefix | string | no | — | Optional. Narrow to one namespace or hub, e.g. 'contoso-ns/aisoc-hub'. Leave blank to read the whole container. |
 
 :::note Credential handling
-`client_secret` is encrypted at rest by the credential vault before the row is written, and decrypted only at poll time. The value is never logged and never returned by the API — a read of the saved connector shows the field as set, not its contents. See [credential vault](../operations/credentials.md).
+`client_secret`, `certificate_pem`, `private_key_password` are encrypted at rest by the credential vault before the row is written, and decrypted only at poll time. The value is never logged and never returned by the API — a read of the saved connector shows the field as set, not its contents. See [credential vault](../operations/credentials.md).
 :::
 
 ## Setup

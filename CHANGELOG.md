@@ -19,6 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `app/connectors/ms_cert_auth.py`. Exactly one of secret or certificate must
   be configured (the certificate wins if both are); existing secret-based
   instances are unchanged and the token scope of each connector is untouched.
+  The same certificate option now covers Microsoft Defender (Graph security
+  alerts), Azure Activity, Azure Event Hubs capture, Microsoft Sentinel and
+  Microsoft Intune.
 
 - **`AISOC_LLM_THINKING` knob for thinking-tier models** (#1883). A
   thinking-tier model streams chain-of-thought into `reasoning_content` and
