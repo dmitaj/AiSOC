@@ -87,7 +87,7 @@ def test_m365_audit_schema_advertises_hosted_oauth():
     schema = M365AuditConnector.schema()
     assert schema.oauth is not None
     assert schema.oauth.supported_in_hosted is True
-    assert "ActivityFeed.Read" in (schema.oauth.scopes or [""])[0]
+    assert any("ActivityFeed.Read" in s for s in schema.oauth.scopes or [])
 
 
 def test_m365_normalize_high_risk_op_is_high():

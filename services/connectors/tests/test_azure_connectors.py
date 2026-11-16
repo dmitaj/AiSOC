@@ -569,4 +569,47 @@ def test_certificate_lifecycle_metadata_is_not_a_constructor_kwarg(cls_index):
 
     pem, _, _ = _make_cert_pem()
     stored = {"tenant_id": _TENANT, "client_id": _CLIENT, "certificate_lifecycle": {"managed": True, "not_after": "2028-01-01"}}
-    _connector_cases()[cls_index](certificate_pem=pem, **_connector_kwargs(stored))
+    make, _ = _connector_cases()[cls_index]
+    type(make(client_secret=_SECRET))(certificate_pem=pem, **_connector_kwargs(stored))
+
+
+# ---------------------------------------------------------------------------
+# One-click OAuth: the api stores only a delegated token (oauth.py callback)
+# ---------------------------------------------------------------------------
+
+
+def _delegated_payload() -> dict[str, str]:
+    import base64
+    import json
+
+    claims = base64.urlsafe_b64encode(json.dumps({"tid": _TENANT}).encode()).decode().rstrip("=")
+    # Exactly the keys oauth.py's callback writes into auth_config.
+    return {
+        "access_token": f"eyJhbGciOiJub25lIn0.{claims}.sig",
+        "refresh_token": "r",
+        "id_token": "i",
+        "token_type": "Bearer",
+        "expires_at": "2026-11-16T02:00:00+00:00",
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cls_name", ["azure_entra", "m365_audit", "azure_defender"])
+async def test_oauth_provisioned_instance_uses_the_delegated_token(cls_name):
+    from app.connectors import _CONNECTOR_CLASSES
+
+    cls = next(c for c in _CONNECTOR_CLASSES if c.connector_id == cls_name)
+    payload = _delegated_payload()
+    connector = cls(**payload)
+    with respx.mock(assert_all_called=False) as mock:
+        token_route = mock.post(url__startswith="https://login.microsoftonline.com/")
+        assert await connector._authenticate() == payload["access_token"]
+    assert not token_route.called
+    assert connector._tenant_id == _TENANT
+    assert any(s == "offline_access" for s in connector.schema().oauth.scopes)
+
+
+def test_oauth_provisioned_activity_still_needs_a_subscription():
+    with pytest.raises(ValueError, match="subscription_id is required"):
+        AzureActivityConnector(**_delegated_payload())
+    assert AzureActivityConnector(subscription_id=_SUB, **_delegated_payload())._tenant_id == _TENANT

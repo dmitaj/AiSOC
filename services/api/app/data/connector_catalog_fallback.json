@@ -439,6 +439,7 @@
     "oauth": {
       "authorize_url": "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
       "scopes": [
+        "offline_access",
         "https://management.azure.com/user_impersonation"
       ],
       "supported_in_hosted": true,
@@ -503,6 +504,7 @@
     "oauth": {
       "authorize_url": "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
       "scopes": [
+        "offline_access",
         "https://graph.microsoft.com/SecurityAlert.Read.All"
       ],
       "supported_in_hosted": true,
@@ -565,6 +567,7 @@
     "oauth": {
       "authorize_url": "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
       "scopes": [
+        "offline_access",
         "https://graph.microsoft.com/AuditLog.Read.All",
         "https://graph.microsoft.com/Directory.Read.All"
       ],
@@ -2462,6 +2465,7 @@
     "oauth": {
       "authorize_url": "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
       "scopes": [
+        "offline_access",
         "https://manage.office.com/ActivityFeed.Read"
       ],
       "supported_in_hosted": true,

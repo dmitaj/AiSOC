@@ -7,6 +7,7 @@ dependency), reusing ``b64url`` from ``gcp_service_account``.
 
 from __future__ import annotations
 
+import base64
 import json
 import time
 import uuid
@@ -123,3 +124,15 @@ def token_form(cred: CertificateCredential | None, client_id: str, client_secret
         "client_assertion_type": ASSERTION_TYPE,
         "client_assertion": cred.assertion(client_id, audience),
     }
+
+
+def token_tenant(access_token: str) -> str:
+    """Tenant (``tid``) of a delegated token from the one-click OAuth flow, which stores no tenant_id.
+
+    Read without verifying: Microsoft verifies the token; this only picks the tenant for API URLs.
+    """
+    try:
+        payload = access_token.split(".")[1]
+        return str(json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4))).get("tid") or "")
+    except Exception:
+        return ""

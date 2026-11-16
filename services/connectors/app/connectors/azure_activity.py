@@ -24,7 +24,7 @@ import httpx
 import structlog
 
 from app.connectors.base import BaseConnector, Capability, ConnectorSchema, Field, OAuthHints
-from app.connectors.ms_cert_auth import build_credential, cert_schema_fields, token_form
+from app.connectors.ms_cert_auth import build_credential, cert_schema_fields, token_form, token_tenant
 
 logger = structlog.get_logger()
 
@@ -93,7 +93,7 @@ class AzureActivityConnector(BaseConnector):
                 supported_in_hosted=True,
                 authorize_url="https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
                 token_url="https://login.microsoftonline.com/common/oauth2/v2.0/token",
-                scopes=["https://management.azure.com/user_impersonation"],
+                scopes=["offline_access", "https://management.azure.com/user_impersonation"],
             ),
         )
 
@@ -108,24 +108,38 @@ class AzureActivityConnector(BaseConnector):
 
     def __init__(
         self,
-        tenant_id: str,
-        client_id: str,
-        subscription_id: str,
+        tenant_id: str = "",
+        client_id: str = "",
+        subscription_id: str = "",
         client_secret: str = "",
         certificate_pem: str = "",
         certificate_thumbprint: str = "",
         private_key_password: str = "",
+        access_token: str = "",
+        refresh_token: str = "",  # held by the api's oauth_refresh worker; unused here
+        token_type: str = "",
+        expires_at: str = "",
+        id_token: str = "",
     ):
-        self._tenant_id = tenant_id
+        # One-click OAuth stores only a delegated token; its tid names the tenant.
+        self._delegated = access_token
+        self._tenant_id = tenant_id or token_tenant(access_token)
         self._client_id = client_id
         self._client_secret = client_secret
-        self._cert = build_credential(client_secret, certificate_pem, certificate_thumbprint, private_key_password)
+        self._cert = (
+            None if access_token else build_credential(client_secret, certificate_pem, certificate_thumbprint, private_key_password)
+        )
+        if not subscription_id:
+            raise ValueError("subscription_id is required")
         self._subscription_id = subscription_id
         self._access_token: str | None = None
 
     # --------------------------- auth ---------------------------
 
     async def _authenticate(self) -> str:
+        if self._delegated:
+            self._access_token = self._delegated
+            return self._delegated
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.post(
                 _TOKEN_URL.format(tenant_id=self._tenant_id),
