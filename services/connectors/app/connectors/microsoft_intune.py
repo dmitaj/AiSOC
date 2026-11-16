@@ -47,6 +47,7 @@ import httpx
 import structlog
 
 from app.connectors.base import BaseConnector, Capability, ConnectorSchema, Field
+from app.connectors.ms_cert_auth import build_credential, cert_schema_fields, token_form
 from app.workforce import DeviceRecord
 
 logger = structlog.get_logger()
@@ -115,11 +116,13 @@ class MicrosoftIntuneConnector(BaseConnector):
                     "client_secret",
                     "secret",
                     "Client secret",
+                    required=False,
                     help_text=(
-                        "The app registration needs the application permission "
-                        "DeviceManagementManagedDevices.Read.All, granted with admin consent."
+                        "Leave empty when using a certificate (recommended). The app registration needs the "
+                        "application permission DeviceManagementManagedDevices.Read.All, granted with admin consent."
                     ),
                 ),
+                *cert_schema_fields(Field),
             ],
             capabilities=cls.capabilities(),
         )
@@ -132,12 +135,16 @@ class MicrosoftIntuneConnector(BaseConnector):
         self,
         tenant_id: str,
         client_id: str,
-        client_secret: str,
+        client_secret: str = "",
         transport: Any | None = None,
+        certificate_pem: str = "",
+        certificate_thumbprint: str = "",
+        private_key_password: str = "",
     ) -> None:
         self._tenant_id = tenant_id
         self._client_id = client_id
         self._client_secret = client_secret
+        self._cert = build_credential(client_secret, certificate_pem, certificate_thumbprint, private_key_password)
         self._transport = transport
         self._token: str | None = None
         self._token_expires_at: float = 0.0
@@ -147,13 +154,13 @@ class MicrosoftIntuneConnector(BaseConnector):
         # the call produces a 401 an operator reads as a bad credential.
         if self._token and time.time() < self._token_expires_at - 60:
             return self._token
+        token_url = f"{_LOGIN}/{self._tenant_id}/oauth2/v2.0/token"
         async with httpx.AsyncClient(timeout=30.0, transport=self._transport) as client:
             response = await client.post(
-                f"{_LOGIN}/{self._tenant_id}/oauth2/v2.0/token",
+                token_url,
                 data={
                     "grant_type": "client_credentials",
-                    "client_id": self._client_id,
-                    "client_secret": self._client_secret,
+                    **token_form(self._cert, self._client_id, self._client_secret, token_url),
                     "scope": "https://graph.microsoft.com/.default",
                 },
             )

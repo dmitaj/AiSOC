@@ -15,8 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the title and rule, the source IP, country and AS are lifted, the decision
   type and duration become the action, and the first event's
   `target_fqdn`, `http_path` (AppSec's `uri`) and `http_status` are kept for
-  reverse-proxy and virtual-patching scenarios. A ban is `high`, any other
-  decision `medium`, a simulated alert `low`; brute-force scenarios map to
+  reverse-proxy and virtual-patching scenarios. Alerts and decisions,
+  bans included, are `medium` and a simulated alert `low`; brute-force scenarios map to
   T1110, scan/crawl/probe scenarios to T1595 and `vpatch-*`/CVE scenarios to
   T1190. Community and list blocklist pulls, which LAPI records as alerts
   (`update : +15000/-0 IPs`) and returns by default, are excluded with
@@ -82,6 +82,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `app/connectors/ms_cert_auth.py`. Exactly one of secret or certificate must
   be configured (the certificate wins if both are); existing secret-based
   instances are unchanged and the token scope of each connector is untouched.
+  The same certificate option now covers Microsoft Defender (Graph security
+  alerts), Azure Activity, Azure Event Hubs capture, Microsoft Sentinel and
+  Microsoft Intune.
 
 - **`AISOC_LLM_THINKING` knob for thinking-tier models** (#1883). A
   thinking-tier model streams chain-of-thought into `reasoning_content` and
