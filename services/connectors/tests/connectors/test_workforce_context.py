@@ -56,7 +56,7 @@ class TestRegistration:
         expected_secret = {
             "bamboohr": {"api_key"},
             "rippling": {"api_token"},
-            "microsoft_intune": {"client_secret"},
+            "microsoft_intune": {"client_secret", "certificate_pem", "private_key_password"},
         }
         for cls in (BambooHRConnector, RipplingConnector, MicrosoftIntuneConnector):
             declared = {f.name for f in cls.schema().fields if f.type == "secret"}

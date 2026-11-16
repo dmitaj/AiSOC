@@ -121,18 +121,18 @@ export function TopBar({ demoOffset = false }: TopBarProps) {
 
   return (
     <header
-      className={`fixed left-60 right-0 h-16 flex items-center justify-between px-6 bg-surface-raised/90 backdrop-blur-sm border-b border-surface-border z-20 ${
+      className={`fixed left-0 md:left-60 right-0 h-16 flex items-center justify-between gap-3 pl-16 pr-4 md:px-6 bg-surface-raised/90 backdrop-blur-sm border-b border-surface-border z-20 ${
         demoOffset ? 'top-9' : 'top-0'
       }`}
     >
       {/* Page title */}
-      <div>
-        <h1 className="text-base font-semibold text-fg-primary leading-tight">{routeInfo.title}</h1>
-        <p className="text-xs text-fg-subtle">{routeInfo.description}</p>
+      <div className="min-w-0">
+        <h1 className="text-base font-semibold text-fg-primary leading-tight truncate">{routeInfo.title}</h1>
+        <p className="text-xs text-fg-subtle truncate">{routeInfo.description}</p>
       </div>
 
       {/* Center: command palette launcher */}
-      <div className="flex-1 max-w-lg mx-8">
+      <div className="hidden sm:block flex-1 max-w-lg mx-8">
         <button
           type="button"
           onClick={openPalette}
@@ -162,7 +162,7 @@ export function TopBar({ demoOffset = false }: TopBarProps) {
       </div>
 
       {/* Right: time window, tenant, role badge, clock, theme toggle, notifications, user */}
-      <div className="flex items-center gap-3">
+      <div className="flex shrink-0 items-center gap-3">
         {/*
           v1.5 W4: Global time-window selector. Lives next to the tenant
           switcher in the TopBar so every page reads from the same context.

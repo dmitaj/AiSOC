@@ -115,7 +115,7 @@ def test_azure_entra_normalize_risky_signin_maps_severity():
 
 
 def test_azure_activity_normalize_role_assignment_write_is_high():
-    connector = AzureActivityConnector(_TENANT, _CLIENT, _SECRET, _SUB)
+    connector = AzureActivityConnector(tenant_id=_TENANT, client_id=_CLIENT, client_secret=_SECRET, subscription_id=_SUB)
     raw = {
         "eventDataId": "act-1",
         "operationName": {
@@ -137,7 +137,7 @@ def test_azure_activity_normalize_role_assignment_write_is_high():
 
 
 def test_azure_activity_normalize_routine_read_is_info():
-    connector = AzureActivityConnector(_TENANT, _CLIENT, _SECRET, _SUB)
+    connector = AzureActivityConnector(tenant_id=_TENANT, client_id=_CLIENT, client_secret=_SECRET, subscription_id=_SUB)
     raw = {
         "eventDataId": "act-2",
         "operationName": {
@@ -277,7 +277,7 @@ async def test_azure_activity_test_connection_success():
         return_value=httpx.Response(200, json={"id": f"/subscriptions/{_SUB}", "displayName": "Production"})
     )
 
-    connector = AzureActivityConnector(_TENANT, _CLIENT, _SECRET, _SUB)
+    connector = AzureActivityConnector(tenant_id=_TENANT, client_id=_CLIENT, client_secret=_SECRET, subscription_id=_SUB)
     result = await connector.test_connection()
     assert result["success"] is True
     assert result["subscription_name"] == "Production"
@@ -292,7 +292,7 @@ async def test_azure_activity_fetch_alerts_handles_empty_response():
     activity_url = f"https://management.azure.com/subscriptions/{_SUB}/providers/Microsoft.Insights/eventtypes/management/values"
     respx.get(activity_url).mock(return_value=httpx.Response(200, json={"value": []}))
 
-    connector = AzureActivityConnector(_TENANT, _CLIENT, _SECRET, _SUB)
+    connector = AzureActivityConnector(tenant_id=_TENANT, client_id=_CLIENT, client_secret=_SECRET, subscription_id=_SUB)
     events = await connector.fetch_alerts(since_seconds=600)
     assert events == []
 
@@ -404,3 +404,169 @@ async def test_azure_defender_get_resource_config_non_200_returns_empty():
 
     connector = AzureDefenderConnector(_TENANT, _CLIENT, _SECRET)
     assert await connector.get_resource_config("missing") == {}
+
+
+# ---------------------------------------------------------------------------
+# Certificate (client_assertion) auth — Entra and M365 audit share the helper
+# ---------------------------------------------------------------------------
+
+
+def _make_cert_pem(*, with_cert: bool = True) -> tuple[str, str, object]:
+    """Throwaway RSA key + self-signed cert -> (pem, sha1 hex thumbprint, cert)."""
+    import datetime as dt
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "aisoc-test")])
+    now = dt.datetime.now(dt.UTC)
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now)
+        .not_valid_after(now + dt.timedelta(days=1))
+        .sign(key, hashes.SHA256())
+    )
+    pem = key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()).decode()
+    if with_cert:
+        pem += cert.public_bytes(serialization.Encoding.PEM).decode()
+    return pem, cert.fingerprint(hashes.SHA1()).hex(), cert  # noqa: S303 - test
+
+
+def _b64d(part: str) -> bytes:
+    import base64
+
+    return base64.urlsafe_b64decode(part + "=" * (-len(part) % 4))
+
+
+def _connector_cases():
+    """(factory(**credential_kwargs), mint_token(connector)) for every Microsoft client-credentials connector."""
+    from app.connectors.azure_activity import AzureActivityConnector
+    from app.connectors.azure_event_hubs import AzureEventHubsConnector
+    from app.connectors.m365_audit import M365AuditConnector
+    from app.connectors.microsoft_intune import MicrosoftIntuneConnector
+    from app.connectors.microsoft_sentinel import MicrosoftSentinelConnector
+
+    async def event_hubs_token(conn):
+        async with httpx.AsyncClient() as client:
+            return await conn._authenticate(client)
+
+    base = {"tenant_id": _TENANT, "client_id": _CLIENT}
+
+    def plain(cls, **extra):
+        return (lambda **kw: cls(**base, **extra, **kw), lambda conn: conn._authenticate())
+
+    return [
+        plain(AzureEntraConnector),
+        plain(M365AuditConnector),
+        plain(AzureDefenderConnector),
+        plain(AzureActivityConnector, subscription_id=_SUB),
+        plain(MicrosoftSentinelConnector, subscription_id=_SUB, resource_group="rg", workspace="ws"),
+        (lambda **kw: AzureEventHubsConnector(**base, storage_account="acct", container="c", **kw), event_hubs_token),
+        (lambda **kw: MicrosoftIntuneConnector(**base, **kw), lambda conn: conn._access_token()),
+    ]
+
+
+_CASES = range(7)
+
+
+def _posted_form(route) -> dict[str, str]:
+    from urllib.parse import parse_qs
+
+    return {k: v[0] for k, v in parse_qs(route.calls.last.request.content.decode()).items()}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cls_index", _CASES)
+@pytest.mark.parametrize("with_cert", [True, False])
+async def test_certificate_auth_sends_signed_client_assertion(cls_index, with_cert):
+    import json
+
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import padding
+
+    pem, thumb_hex, cert = _make_cert_pem(with_cert=with_cert)
+    make, mint = _connector_cases()[cls_index]
+    connector = make(
+        certificate_pem=pem,
+        certificate_thumbprint="" if with_cert else thumb_hex.upper(),
+    )
+    token_url = f"https://login.microsoftonline.com/{_TENANT}/oauth2/v2.0/token"
+    with respx.mock(assert_all_called=False) as mock:
+        route = mock.post(token_url).mock(return_value=httpx.Response(200, json={"access_token": "tok"}))
+        assert await mint(connector) == "tok"
+
+    form = _posted_form(route)
+    assert "client_secret" not in form
+    assert form["client_assertion_type"] == "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+    h, c, s = form["client_assertion"].split(".")
+    header, claims = json.loads(_b64d(h)), json.loads(_b64d(c))
+    assert header["alg"] == "RS256"
+    assert _b64d(header["x5t"]).hex() == thumb_hex
+    assert ("x5t#S256" in header) is with_cert
+    if with_cert:
+        assert _b64d(header["x5t#S256"]) == cert.fingerprint(hashes.SHA256())
+    assert claims["aud"] == token_url
+    assert claims["iss"] == claims["sub"] == _CLIENT
+    assert claims["exp"] > claims["nbf"]
+    assert claims["jti"]
+    cert.public_key().verify(_b64d(s), f"{h}.{c}".encode(), padding.PKCS1v15(), hashes.SHA256())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cls_index", _CASES)
+async def test_secret_auth_unchanged(cls_index):
+    make, mint = _connector_cases()[cls_index]
+    connector = make(client_secret=_SECRET)
+    with respx.mock() as mock:
+        route = mock.post(f"https://login.microsoftonline.com/{_TENANT}/oauth2/v2.0/token").mock(
+            return_value=httpx.Response(200, json={"access_token": "tok"})
+        )
+        await mint(connector)
+    form = _posted_form(route)
+    assert form["client_secret"] == _SECRET
+    assert "client_assertion" not in form
+
+
+@pytest.mark.parametrize("cls_index", _CASES)
+def test_certificate_wins_when_both_given_and_bad_config_refused(cls_index):
+    make, _ = _connector_cases()[cls_index]
+    pem, _, _ = _make_cert_pem()
+    assert make(client_secret=_SECRET, certificate_pem=pem)._cert is not None
+    with pytest.raises(ValueError, match="either client_secret or certificate_pem"):
+        make()
+    with pytest.raises(ValueError, match="PRIVATE KEY"):
+        make(certificate_pem="not a pem")
+    key_only, _, _ = _make_cert_pem(with_cert=False)
+    with pytest.raises(ValueError, match="certificate_thumbprint is required"):
+        make(certificate_pem=key_only)
+    with pytest.raises(ValueError, match="hex SHA-1"):
+        make(certificate_pem=key_only, certificate_thumbprint="zz")
+
+
+@pytest.mark.parametrize("cls_index", _CASES)
+def test_schema_cert_fields_optional(cls_index):
+    make, _ = _connector_cases()[cls_index]
+    fields = {f.name: f for f in type(make(client_secret=_SECRET)).schema().fields}
+    assert fields["client_secret"].required is False
+    for name in ("certificate_pem", "certificate_thumbprint", "private_key_password"):
+        assert fields[name].required is False
+    assert fields["certificate_pem"].type == "secret"
+    assert fields["private_key_password"].type == "secret"
+
+
+@pytest.mark.parametrize("cls_index", [0, 1])
+def test_certificate_lifecycle_metadata_is_not_a_constructor_kwarg(cls_index):
+    """The api keeps ``connector_config.certificate_lifecycle`` (expiry, managed);
+    construction sites must drop it or the instance becomes a TypeError."""
+    from app.api.router import _connector_kwargs
+
+    pem, _, _ = _make_cert_pem()
+    stored = {"tenant_id": _TENANT, "client_id": _CLIENT, "certificate_lifecycle": {"managed": True, "not_after": "2028-01-01"}}
+    _connector_cases()[cls_index](certificate_pem=pem, **_connector_kwargs(stored))

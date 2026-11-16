@@ -29,10 +29,19 @@ import {
   connectorsApi,
   type Connector,
   type ConnectorCatalogEntry,
+  type CertificateLifecycle,
   type ConnectorSchemaField,
+  type GeneratedCertificate,
   type UpdateConnectorPayload,
 } from '@/lib/api';
-import { FieldInput, buildInitialValues, describeApiError } from './AddConnectorModal';
+import {
+  FieldInput,
+  PASTED_CERT_FIELDS,
+  buildInitialValues,
+  describeApiError,
+  withGeneratedCertificate,
+} from './AddConnectorModal';
+import { CertificateGenerator, CertificateStatus } from './CertificateGenerator';
 
 type FormValue = string | number | boolean;
 type FormValues = Record<string, FormValue>;
@@ -139,6 +148,8 @@ function EditConnectorDialog({
   const [initialValues, setInitialValues] = useState<FormValues>({});
   const [values, setValues] = useState<FormValues>({});
   const [saving, setSaving] = useState(false);
+  const [generatedCert, setGeneratedCert] = useState<GeneratedCertificate | null>(null);
+  const certLifecycle = connector.config?.certificate_lifecycle as CertificateLifecycle | undefined;
 
   // The schema comes from the catalog; the stored settings come from the row
   // the list already holds, so there is no second request for them.
@@ -180,10 +191,14 @@ function EditConnectorDialog({
   }, [saving, onClose]);
 
   const fields = useMemo(() => entry?.fields ?? [], [entry]);
-  const patch = useMemo(
-    () => buildConnectorPatch(fields, initialValues, values),
-    [fields, initialValues, values],
-  );
+  const patch = useMemo(() => {
+    const p = buildConnectorPatch(fields, initialValues, values);
+    if (!generatedCert) return p;
+    const auth = { ...(p.auth_config ?? {}) };
+    const cfg = { ...(p.connector_config ?? {}) };
+    withGeneratedCertificate(auth, cfg, generatedCert);
+    return { auth_config: auth, ...(Object.keys(cfg).length > 0 ? { connector_config: cfg } : {}) };
+  }, [fields, initialValues, values, generatedCert]);
   const trimmedName = instanceName.trim();
   const nameChanged = trimmedName !== connector.name;
   const dirty = nameChanged || patch.auth_config !== undefined || patch.connector_config !== undefined;
@@ -305,6 +320,35 @@ function EditConnectorDialog({
 
             {catalogState === 'ready' &&
               fields.map((f) => {
+                if (generatedCert && PASTED_CERT_FIELDS.has(f.name) && f.name !== 'certificate_pem') {
+                  return null;
+                }
+                if (f.name === 'certificate_pem') {
+                  return (
+                    <div key={f.name} className="space-y-2">
+                      <p className="block text-xs font-semibold text-gray-300">{f.label}</p>
+                      <CertificateStatus
+                        lifecycle={certLifecycle}
+                        onDownload={() => connectorsApi.downloadCertificate(connector.id)}
+                      />
+                      {!generatedCert && (
+                        <FieldInput
+                          id={`edit-connector-field-${f.name}`}
+                          field={{ ...f, required: false, placeholder: 'Stored — leave blank to keep, or paste a new PEM' }}
+                          value={values[f.name]}
+                          onChange={(v) => setValues((prev) => ({ ...prev, [f.name]: v }))}
+                        />
+                      )}
+                      <CertificateGenerator
+                        connectorType={connector.type}
+                        name={instanceName}
+                        entraTenantId={String(values.tenant_id ?? '')}
+                        generated={generatedCert}
+                        onGenerated={setGeneratedCert}
+                      />
+                    </div>
+                  );
+                }
                 const isSecret = f.type === 'secret';
                 const inputId = `edit-connector-field-${f.name}`;
                 // A stored secret is kept when its field is left blank, so

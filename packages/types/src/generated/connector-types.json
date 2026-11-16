@@ -10,8 +10,8 @@
     "aliases": 2,
     "canonical-fold": 5,
     "profile": 7,
-    "registry": 96,
-    "total": 108
+    "registry": 97,
+    "total": 109
   },
   "generatedFrom": [
     "services/connectors/app/connectors/__init__.py",
@@ -45,6 +45,7 @@
     "confluence_audit",
     "cortex_xdr",
     "cortex_xsiam",
+    "crowdsec",
     "crowdstrike",
     "crowdstrike_falcon",
     "darktrace",
@@ -155,6 +156,7 @@
     "confluence_audit": "registry",
     "cortex_xdr": "registry",
     "cortex_xsiam": "registry",
+    "crowdsec": "registry",
     "crowdstrike": "registry",
     "crowdstrike_falcon": "profile",
     "darktrace": "registry",

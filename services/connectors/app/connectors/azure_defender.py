@@ -26,6 +26,7 @@ import structlog
 
 from app.connectors._paging import read_linked_pages
 from app.connectors.base import BaseConnector, Capability, ConnectorSchema, Field, OAuthHints
+from app.connectors.ms_cert_auth import build_credential, cert_schema_fields, token_form
 
 logger = structlog.get_logger()
 
@@ -56,7 +57,14 @@ class AzureDefenderConnector(BaseConnector):
             fields=[
                 Field("tenant_id", "string", "Tenant ID"),
                 Field("client_id", "string", "Application (Client) ID"),
-                Field("client_secret", "secret", "Client Secret"),
+                Field(
+                    "client_secret",
+                    "secret",
+                    "Client Secret",
+                    required=False,
+                    help_text="Leave empty when using a certificate (recommended). Exactly one of secret or certificate is required.",
+                ),
+                *cert_schema_fields(Field),
             ],
             oauth=OAuthHints(
                 supported_in_hosted=True,
@@ -79,10 +87,19 @@ class AzureDefenderConnector(BaseConnector):
             Capability.RUN_AV_SCAN,
         )
 
-    def __init__(self, tenant_id: str, client_id: str, client_secret: str):
+    def __init__(
+        self,
+        tenant_id: str,
+        client_id: str,
+        client_secret: str = "",
+        certificate_pem: str = "",
+        certificate_thumbprint: str = "",
+        private_key_password: str = "",
+    ):
         self._tenant_id = tenant_id
         self._client_id = client_id
         self._client_secret = client_secret
+        self._cert = build_credential(client_secret, certificate_pem, certificate_thumbprint, private_key_password)
         self._access_token: str | None = None
 
     # --------------------------- auth ---------------------------
@@ -92,8 +109,7 @@ class AzureDefenderConnector(BaseConnector):
             resp = await client.post(
                 _TOKEN_URL.format(tenant_id=self._tenant_id),
                 data={
-                    "client_id": self._client_id,
-                    "client_secret": self._client_secret,
+                    **token_form(self._cert, self._client_id, self._client_secret, _TOKEN_URL.format(tenant_id=self._tenant_id)),
                     "scope": "https://graph.microsoft.com/.default",
                     "grant_type": "client_credentials",
                 },

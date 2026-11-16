@@ -68,7 +68,7 @@ def _safe_connector_type(value: str) -> str:
 
 
 import httpx  # noqa: E402
-from fastapi import APIRouter, Depends, HTTPException, status  # noqa: E402
+from fastapi import APIRouter, Depends, HTTPException, Response, status  # noqa: E402
 from pydantic import BaseModel, Field  # noqa: E402
 from sqlalchemy import select, update  # noqa: E402
 
@@ -79,6 +79,7 @@ from app.core import connectors_auth  # noqa: E402
 from app.core.config import settings  # noqa: E402
 from app.models.connector import Connector  # noqa: E402
 from app.security.credential_vault import CredentialVaultError, get_vault  # noqa: E402
+from app.services import ms_cert_lifecycle  # noqa: E402
 from app.services.connector_freshness import compute_freshness  # noqa: E402
 
 logger = logging.getLogger(__name__)
@@ -282,6 +283,33 @@ class UpdateConnectorRequest(BaseModel):
     auth_config: dict[str, Any] | None = None
     connector_config: dict[str, Any] | None = None
     tags: list[str] | None = None
+
+
+class GenerateCertificateRequest(BaseModel):
+    """Body of ``POST /connectors/certificates``.
+
+    ``name`` and ``entra_directory_id`` (the Entra tenant id) only shape the certificate's CN (and, for
+    the hosted OAuth app, name the tenant rotation requests a token from).
+    ``application_object_id`` is the Entra app's *object* id: auto-rotation
+    signs its proof-of-possession with it, and supplying it here spares the
+    app a directory-read permission to look it up.
+    """
+
+    connector_type: str = Field(min_length=1, max_length=100)
+    name: str | None = Field(default=None, max_length=255)
+    entra_directory_id: str | None = Field(default=None, max_length=255)
+    application_object_id: str | None = Field(default=None, max_length=64)
+
+
+class GeneratedCertificateResponse(BaseModel):
+    """Public half of a freshly generated certificate. The private key is never returned."""
+
+    pending_certificate_id: str
+    thumbprint: str
+    not_after: datetime
+    certificate_pem: str
+    certificate_der_base64: str
+    pending_expires_in_seconds: int
 
 
 class TestConnectionRequest(BaseModel):
@@ -755,6 +783,133 @@ async def connector_health_summary(
     )
 
 
+# ------------------------------------------------------------------ Entra certificates
+
+
+def _strip_lifecycle(config: dict[str, Any] | None) -> dict[str, Any]:
+    """``certificate_lifecycle`` is server-owned; a client may not set it."""
+    return {k: v for k, v in (config or {}).items() if k != ms_cert_lifecycle.LIFECYCLE_KEY}
+
+
+async def _apply_certificate_inputs(
+    tenant_id: uuid.UUID, auth_config: dict[str, Any] | None, *, consume: bool
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Resolve ``auth_config.certificate_pending_id`` into ``certificate_pem``.
+
+    Returns the auth_config to store and the ``certificate_lifecycle`` record
+    to set: ``None`` leaves it alone, ``{}`` removes it (certificate
+    removed). A pasted PEM is recorded unmanaged, with the expiry of its
+    CERTIFICATE block when it has one.
+    """
+    auth = dict(auth_config or {})
+    pending_id = auth.pop("certificate_pending_id", None)
+    if pending_id:
+        try:
+            pending = await ms_cert_lifecycle.load_pending(tenant_id, pending_id, consume=consume)
+            pem = get_vault().decrypt(pending["pem_vault"])
+        except ms_cert_lifecycle.PendingCertificateError as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        except CredentialVaultError as exc:
+            raise HTTPException(status_code=500, detail=f"credential vault unavailable: {exc}. {_VAULT_HINT}") from exc
+        except Exception as exc:  # Redis down
+            raise HTTPException(status_code=503, detail="certificate store (Redis) unavailable") from exc
+        auth["certificate_pem"] = pem
+        auth.pop("private_key_password", None)
+        return auth, {
+            "managed": True,
+            "not_after": pending["not_after"],
+            "thumbprint": pending["thumbprint"],
+            "application_object_id": pending.get("application_object_id"),
+        }
+    pasted = auth.get("certificate_pem")
+    if isinstance(pasted, str) and pasted.strip():
+        cert = ms_cert_lifecycle.certificate_of(pasted)
+        return auth, {
+            "managed": False,
+            "not_after": cert.not_valid_after_utc.isoformat() if cert else None,
+            "thumbprint": ms_cert_lifecycle.thumbprint(cert) if cert else None,
+        }
+    if "certificate_pem" in auth and auth["certificate_pem"] is None:
+        return auth, {}
+    return auth, None
+
+
+@router.post("/certificates", response_model=GeneratedCertificateResponse, status_code=status.HTTP_201_CREATED)
+async def generate_certificate(
+    request: GenerateCertificateRequest,
+    current_user: Annotated[AuthUser, Depends(require_permission("connectors:write"))],
+) -> GeneratedCertificateResponse:
+    """Generate an Entra app certificate (RSA-2048, self-signed, SHA-256, 730 days).
+
+    The key and certificate are vault-encrypted and parked for 24 hours under
+    ``pending_certificate_id``; pass it as ``auth_config.certificate_pending_id``
+    to ``POST /connectors`` / ``PATCH /connectors/{id}`` / ``POST
+    /connectors/test``, or as ``certificate_pending_id`` to ``PUT
+    /oauth/app/{connector_type}``. Only the public certificate is returned —
+    upload it (the DER, as a .cer) to the Entra app registration.
+    """
+    if request.connector_type not in ms_cert_lifecycle.CERT_CONNECTOR_TYPES:
+        raise HTTPException(status_code=422, detail="Certificate generation is for azure_entra and m365_audit only.")
+    if request.application_object_id and not ms_cert_lifecycle.is_guid(request.application_object_id):
+        raise HTTPException(status_code=422, detail="application_object_id must be the app registration's Object ID (a GUID).")
+    tenant = (request.entra_directory_id or "").strip()
+    if tenant and not ms_cert_lifecycle.valid_tenant(tenant):
+        raise HTTPException(status_code=422, detail="entra_directory_id must be an Entra tenant GUID or domain.")
+    generated = ms_cert_lifecycle.generate_certificate(ms_cert_lifecycle.common_name(request.name or request.connector_type, tenant))
+    try:
+        payload = {
+            "pem_vault": get_vault().encrypt(generated.pem),
+            "thumbprint": generated.thumbprint,
+            "not_after": generated.not_after.isoformat(),
+            "connector_type": request.connector_type,
+            "entra_tenant_id": tenant or None,
+            "application_object_id": request.application_object_id or None,
+        }
+    except CredentialVaultError as exc:
+        raise HTTPException(status_code=500, detail=f"credential vault unavailable: {exc}. {_VAULT_HINT}") from exc
+    try:
+        pending_id = await ms_cert_lifecycle.store_pending(current_user.tenant_id, payload)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="certificate store (Redis) unavailable") from exc
+    return GeneratedCertificateResponse(
+        pending_certificate_id=pending_id,
+        pending_expires_in_seconds=ms_cert_lifecycle.PENDING_TTL_SECONDS,
+        **ms_cert_lifecycle.public_view(generated.certificate),
+    )
+
+
+def cer_response(cert: Any, filename: str) -> Response:
+    """A public certificate as a ``.cer`` (DER) download."""
+    safe = re.sub(r"[^A-Za-z0-9._-]", "_", filename)[:80] or "certificate"
+    return Response(
+        content=ms_cert_lifecycle.der(cert),
+        media_type="application/pkix-cert",
+        headers={"Content-Disposition": f'attachment; filename="{safe}.cer"'},
+    )
+
+
+@router.get("/{connector_id}/certificate.cer")
+async def download_connector_certificate(
+    connector_id: uuid.UUID,
+    current_user: Annotated[AuthUser, Depends(require_permission("connectors:read"))],
+    db: DBSession,
+) -> Response:
+    """The connector's current public certificate (DER) — never the key."""
+    connector = (
+        await db.execute(select(Connector).where(Connector.id == connector_id, Connector.tenant_id == current_user.tenant_id))
+    ).scalar_one_or_none()
+    if connector is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connector not found")
+    try:
+        pem = get_vault().decrypt_dict(connector.auth_config or {}).get("certificate_pem")
+    except CredentialVaultError as exc:
+        raise HTTPException(status_code=500, detail=f"credential vault unavailable: {exc}. {_VAULT_HINT}") from exc
+    cert = ms_cert_lifecycle.certificate_of(pem if isinstance(pem, str) else None)
+    if cert is None:
+        raise HTTPException(status_code=404, detail="This connector has no stored certificate (or only a private key).")
+    return cer_response(cert, f"aisoc-{connector.connector_type}-{ms_cert_lifecycle.thumbprint(cert)[:8]}")
+
+
 # ------------------------------------------------------------------ pre-save test
 
 
@@ -771,10 +926,11 @@ async def test_connection(
     persisted** — these credentials never touch Postgres or the vault.
     """
     await _validate_connector_type(request.connector_type, current_user.tenant_id)
+    auth_config, _ = await _apply_certificate_inputs(current_user.tenant_id, request.auth_config, consume=False)
     return await _proxy_test_connection(
         request.connector_type,
-        request.auth_config,
-        request.connector_config,
+        auth_config,
+        _strip_lifecycle(request.connector_config),
         current_user.tenant_id,
     )
 
@@ -873,8 +1029,13 @@ async def create_connector(
     catalog_entry = await _validate_connector_type(request.connector_type, current_user.tenant_id)
     category = request.category or catalog_entry.get("category") or "uncategorized"
 
+    connector_config = _strip_lifecycle(request.connector_config)
+    auth_config, lifecycle = await _apply_certificate_inputs(current_user.tenant_id, request.auth_config, consume=True)
+    if lifecycle:
+        connector_config[ms_cert_lifecycle.LIFECYCLE_KEY] = lifecycle
+
     try:
-        encrypted_auth = get_vault().encrypt_dict(request.auth_config or {})
+        encrypted_auth = get_vault().encrypt_dict(auth_config)
     except CredentialVaultError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -887,7 +1048,7 @@ async def create_connector(
         connector_type=request.connector_type,
         category=category,
         auth_config=encrypted_auth,
-        connector_config=request.connector_config,
+        connector_config=connector_config,
         tags=request.tags,
     )
     db.add(connector)
@@ -950,6 +1111,18 @@ async def update_connector(
     # Same rule as create: a saved destination edited to point inside the
     # deployment is the update-model half of GHSA-cq4g-g6wp-4m2w.
     _refuse_internal_destinations(request.auth_config, request.connector_config)
+
+    # A generated certificate (pending id) or a pasted PEM also rewrites the
+    # server-owned ``certificate_lifecycle`` record; clients cannot set it.
+    if request.connector_config is not None:
+        request.connector_config = _strip_lifecycle(request.connector_config)
+    if request.auth_config is not None:
+        request.auth_config, lifecycle = await _apply_certificate_inputs(current_user.tenant_id, request.auth_config, consume=True)
+        if lifecycle is not None:
+            request.connector_config = {
+                **(request.connector_config or {}),
+                ms_cert_lifecycle.LIFECYCLE_KEY: lifecycle or None,
+            }
 
     updates: dict[str, Any] = {}
     for field in ("name", "is_enabled", "auth_config", "connector_config", "tags"):

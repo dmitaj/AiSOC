@@ -352,6 +352,13 @@ class Settings(BaseSettings):
     # loop; a hung provider should not stall the cadence.
     OAUTH_REFRESH_HTTP_TIMEOUT_SECONDS: float = 15.0
 
+    # Rotation of AiSOC-generated Entra app certificates (connectors and the
+    # hosted OAuth app): a daily pass rolls any managed certificate within 30
+    # days of expiry via Microsoft Graph addKey/removeKey. Runs under the
+    # scheduler lock, so one replica rotates at a time.
+    MS_CERT_ROTATION_WORKER_ENABLED: bool = True
+    MS_CERT_ROTATION_INTERVAL_SECONDS: int = 86400
+
     # ------------------------------------------------------------------
     # WS-G2: Weekly Executive Digest auto-generation worker.
     # Author: Beenu <beenu@cyble.com>

@@ -18,7 +18,8 @@
 import { clsx } from 'clsx';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { SkeletonCard } from '@/components/ui/Skeleton';
-import type { Connector } from '@/lib/api';
+import type { CertificateLifecycle, Connector } from '@/lib/api';
+import { CertificateStatus } from './CertificateGenerator';
 
 const CONNECTOR_LABELS: Record<string, string> = {
   crowdstrike: 'CS',
@@ -288,6 +289,15 @@ function ConnectorCard({
           )}
         </div>
       )}
+
+      {/* Entra app certificate: expiry, and whether AiSOC rotates it. */}
+      {connector.config?.certificate_lifecycle ? (
+        <div className="mb-3">
+          <CertificateStatus
+            lifecycle={connector.config.certificate_lifecycle as CertificateLifecycle}
+          />
+        </div>
+      ) : null}
 
       <div className="grid grid-cols-2 gap-2 mb-4">
         <div className="bg-gray-800/60 rounded-lg p-2">

@@ -9,6 +9,83 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **CrowdSec connector.** `crowdsec` reads alerts from a CrowdSec Local API
+  (LAPI). With a machine account (`cscli machines add`) it signs in at
+  `POST /v1/watchers/login` and reads `GET /v1/alerts`: the scenario becomes
+  the title and rule, the source IP, country and AS are lifted, the decision
+  type and duration become the action, and the first event's
+  `target_fqdn`, `http_path` (AppSec's `uri`) and `http_status` are kept for
+  reverse-proxy and virtual-patching scenarios. Alerts and decisions,
+  bans included, are `medium` and a simulated alert `low`; brute-force scenarios map to
+  T1110, scan/crawl/probe scenarios to T1595 and `vpatch-*`/CVE scenarios to
+  T1190. Community and list blocklist pulls, which LAPI records as alerts
+  (`update : +15000/-0 IPs`) and returns by default, are excluded with
+  `include_capi=false` and dropped again client-side; the bouncer stream is
+  narrowed to `origins=crowdsec,cscli`. LAPI's `since` filters on when a bucket started filling, so a poll
+  always looks back at least an hour and drops re-read alerts by `id`; a poll
+  reads at most 500 alerts (LAPI has no continuation) and logs when that
+  binds. With only a bouncer key it reads `GET /v1/decisions/stream`
+  (decisions without scenario context). Read-only: nothing adds or removes a
+  decision. `ocsf_classes.go` files `crowdsec` at 2001 Security Finding.
+  Setup is on the new [CrowdSec](apps/docs/docs/connectors/crowdsec.md) page.
+
+- **AiSOC-generated, auto-rotated Entra app certificates.** `POST
+  /api/v1/connectors/certificates` generates an RSA-2048 key and a self-signed
+  SHA-256 certificate valid for 730 days, parks the key vault-encrypted for 24
+  hours (Redis, tenant-scoped) and returns only the public certificate
+  (thumbprint, expiry, PEM and DER) plus a `pending_certificate_id`. Passing
+  that id as `auth_config.certificate_pending_id` to `POST /connectors`,
+  `PATCH /connectors/{id}` or `POST /connectors/test`, or as
+  `certificate_pending_id` to `PUT /oauth/app/{connector_type}`, stores the key
+  exactly where a pasted PEM goes. `GET /connectors/{id}/certificate.cer` and
+  `GET /oauth/app/{connector_type}/certificate.cer` download the public
+  certificate again; no endpoint returns the key. The add wizard, the edit
+  dialog and the OAuth panel get a **Generate certificate** button (thumbprint,
+  expiry, **Download .cer**, upload instructions); pasting a PEM still works.
+  Expiry and whether AiSOC manages the certificate are recorded in
+  `connector_config.certificate_lifecycle` for connectors and in the new
+  `client_certificate_not_after` / `client_certificate_managed` /
+  `client_certificate_rotation` columns for the OAuth app (migration
+  `163_oauth_app_certificate_lifecycle.sql`), and shown as "Certificate expires
+  … · auto-rotates" or "— rotate manually". A new lease-guarded daily worker
+  (`app/workers/ms_cert_rotation.py`, `MS_CERT_ROTATION_WORKER_ENABLED`) rolls
+  every AiSOC-generated certificate within 30 days of expiry through Microsoft
+  Graph `addKey` / `removeKey` with proof-of-possession tokens, verifies the
+  new certificate obtains a token before switching, audits each rotation, and
+  on failure keeps the old certificate, records the error on the row, logs an
+  alarm and retries the next day. Pasted certificates are never rotated.
+
+- **Certificate credential for the one-click Microsoft OAuth app.** The
+  console's **Register OAuth app** form gets a **Client secret | Certificate**
+  toggle for Microsoft identity platform providers (token endpoint on
+  `login.microsoftonline.com` / `login.microsoft.com`). `PUT
+  /api/v1/oauth/app/{connector_type}` accepts `certificate_pem` (+ optional
+  `certificate_thumbprint`, `private_key_password`) in place of
+  `client_secret` — exactly one is required, the certificate wins if both are
+  sent, the PEM is validated on save (422 otherwise), and a certificate for
+  any other provider is refused. The GET projection adds `has_certificate`
+  and `certificate_thumbprint`, never the key. The code exchange and the
+  background refresh then send an RS256 `client_assertion` instead of
+  `client_secret` (`app/services/ms_client_assertion.py`). Migration
+  `162_oauth_app_certificate_credential.sql` makes `client_secret_vault`
+  nullable and adds `client_certificate_vault` / `client_certificate_thumbprint`
+  with a CHECK that one credential is present; existing secret-based apps are
+  unchanged.
+
+- **Certificate authentication for Microsoft Entra ID and Microsoft 365 audit.**
+  Both connectors accept an Entra app certificate instead of a client secret:
+  new optional `certificate_pem` (secret, PEM private key, optionally with the
+  certificate), `certificate_thumbprint` and `private_key_password` (secret)
+  fields; `client_secret` is now optional. The token request sends an RS256
+  `client_assertion` (`x5t`, plus `x5t#S256` when the PEM carries the
+  certificate) built with `cryptography`, in a shared
+  `app/connectors/ms_cert_auth.py`. Exactly one of secret or certificate must
+  be configured (the certificate wins if both are); existing secret-based
+  instances are unchanged and the token scope of each connector is untouched.
+  The same certificate option now covers Microsoft Defender (Graph security
+  alerts), Azure Activity, Azure Event Hubs capture, Microsoft Sentinel and
+  Microsoft Intune.
+
 - **`AISOC_LLM_THINKING` knob for thinking-tier models** (#1883). A
   thinking-tier model streams chain-of-thought into `reasoning_content` and
   it counts against `max_tokens` — measured live on the bundled gateway, a

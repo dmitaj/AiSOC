@@ -401,9 +401,31 @@
         "type": "string"
       },
       {
+        "help_text": "Leave empty when using a certificate (recommended). Exactly one of secret or certificate is required.",
         "label": "Client Secret",
         "name": "client_secret",
-        "required": true,
+        "required": false,
+        "type": "secret"
+      },
+      {
+        "help_text": "Recommended over a client secret. Paste a PEM containing the PRIVATE KEY (and optionally the CERTIFICATE) for the certificate whose public .cer you uploaded under Entra portal > App registrations > your app > Certificates & secrets.",
+        "label": "Certificate PEM (private key)",
+        "name": "certificate_pem",
+        "required": false,
+        "type": "secret"
+      },
+      {
+        "help_text": "SHA-1 thumbprint shown next to the certificate under App registrations > Certificates & secrets. Optional when the PEM above also contains the certificate.",
+        "label": "Certificate Thumbprint",
+        "name": "certificate_thumbprint",
+        "required": false,
+        "type": "string"
+      },
+      {
+        "help_text": "Only if the private key in the PEM is encrypted.",
+        "label": "Private Key Password",
+        "name": "private_key_password",
+        "required": false,
         "type": "secret"
       },
       {
@@ -450,9 +472,31 @@
         "type": "string"
       },
       {
+        "help_text": "Leave empty when using a certificate (recommended). Exactly one of secret or certificate is required.",
         "label": "Client Secret",
         "name": "client_secret",
-        "required": true,
+        "required": false,
+        "type": "secret"
+      },
+      {
+        "help_text": "Recommended over a client secret. Paste a PEM containing the PRIVATE KEY (and optionally the CERTIFICATE) for the certificate whose public .cer you uploaded under Entra portal > App registrations > your app > Certificates & secrets.",
+        "label": "Certificate PEM (private key)",
+        "name": "certificate_pem",
+        "required": false,
+        "type": "secret"
+      },
+      {
+        "help_text": "SHA-1 thumbprint shown next to the certificate under App registrations > Certificates & secrets. Optional when the PEM above also contains the certificate.",
+        "label": "Certificate Thumbprint",
+        "name": "certificate_thumbprint",
+        "required": false,
+        "type": "string"
+      },
+      {
+        "help_text": "Only if the private key in the PEM is encrypted.",
+        "label": "Private Key Password",
+        "name": "private_key_password",
+        "required": false,
         "type": "secret"
       }
     ],
@@ -490,9 +534,31 @@
         "type": "string"
       },
       {
+        "help_text": "Leave empty when using a certificate (recommended). Exactly one of secret or certificate is required.",
         "label": "Client Secret",
         "name": "client_secret",
-        "required": true,
+        "required": false,
+        "type": "secret"
+      },
+      {
+        "help_text": "Recommended over a client secret. Paste a PEM containing the PRIVATE KEY (and optionally the CERTIFICATE) for the certificate whose public .cer you uploaded under Entra portal > App registrations > your app > Certificates & secrets.",
+        "label": "Certificate PEM (private key)",
+        "name": "certificate_pem",
+        "required": false,
+        "type": "secret"
+      },
+      {
+        "help_text": "SHA-1 thumbprint shown next to the certificate under App registrations > Certificates & secrets. Optional when the PEM above also contains the certificate.",
+        "label": "Certificate Thumbprint",
+        "name": "certificate_thumbprint",
+        "required": false,
+        "type": "string"
+      },
+      {
+        "help_text": "Only if the private key in the PEM is encrypted.",
+        "label": "Private Key Password",
+        "name": "private_key_password",
+        "required": false,
         "type": "secret"
       }
     ],
@@ -531,9 +597,31 @@
         "type": "string"
       },
       {
-        "label": "Client secret",
+        "help_text": "Leave empty when using a certificate (recommended). Exactly one of secret or certificate is required.",
+        "label": "Client Secret",
         "name": "client_secret",
-        "required": true,
+        "required": false,
+        "type": "secret"
+      },
+      {
+        "help_text": "Recommended over a client secret. Paste a PEM containing the PRIVATE KEY (and optionally the CERTIFICATE) for the certificate whose public .cer you uploaded under Entra portal > App registrations > your app > Certificates & secrets.",
+        "label": "Certificate PEM (private key)",
+        "name": "certificate_pem",
+        "required": false,
+        "type": "secret"
+      },
+      {
+        "help_text": "SHA-1 thumbprint shown next to the certificate under App registrations > Certificates & secrets. Optional when the PEM above also contains the certificate.",
+        "label": "Certificate Thumbprint",
+        "name": "certificate_thumbprint",
+        "required": false,
+        "type": "string"
+      },
+      {
+        "help_text": "Only if the private key in the PEM is encrypted.",
+        "label": "Private Key Password",
+        "name": "private_key_password",
+        "required": false,
         "type": "secret"
       },
       {
@@ -1037,6 +1125,53 @@
         "name": "api_key",
         "required": true,
         "type": "secret"
+      }
+    ]
+  },
+  {
+    "capabilities": [
+      "pull_alerts"
+    ],
+    "category": "network",
+    "connector_id": "crowdsec",
+    "connector_name": "CrowdSec",
+    "description": "CrowdSec alerts and decisions from a Local API (LAPI): the scenario that fired, the source IP with its AS and country, and the ban or captcha decision taken. Machine login for full alerts, or a bouncer API key for decisions only. Read-only.",
+    "docs_url": "/docs/connectors/crowdsec",
+    "fields": [
+      {
+        "help_text": "Base URL of the CrowdSec Local API (default port 8080).",
+        "label": "LAPI URL",
+        "name": "lapi_url",
+        "placeholder": "http://crowdsec.example.com:8080",
+        "required": true,
+        "type": "string"
+      },
+      {
+        "help_text": "From `cscli machines add`. Needed for alerts.",
+        "label": "Machine ID",
+        "name": "machine_id",
+        "required": false,
+        "type": "string"
+      },
+      {
+        "label": "Machine password",
+        "name": "password",
+        "required": false,
+        "type": "secret"
+      },
+      {
+        "help_text": "From `cscli bouncers add`. Used for decisions only, and only when no machine is configured.",
+        "label": "Bouncer API key",
+        "name": "api_key",
+        "required": false,
+        "type": "secret"
+      },
+      {
+        "default": true,
+        "label": "Verify TLS Certificate",
+        "name": "verify_tls",
+        "required": false,
+        "type": "boolean"
       }
     ]
   },
@@ -2296,9 +2431,31 @@
         "type": "string"
       },
       {
+        "help_text": "Leave empty when using a certificate (recommended). Exactly one of secret or certificate is required.",
         "label": "Client Secret",
         "name": "client_secret",
-        "required": true,
+        "required": false,
+        "type": "secret"
+      },
+      {
+        "help_text": "Recommended over a client secret. Paste a PEM containing the PRIVATE KEY (and optionally the CERTIFICATE) for the certificate whose public .cer you uploaded under Entra portal > App registrations > your app > Certificates & secrets.",
+        "label": "Certificate PEM (private key)",
+        "name": "certificate_pem",
+        "required": false,
+        "type": "secret"
+      },
+      {
+        "help_text": "SHA-1 thumbprint shown next to the certificate under App registrations > Certificates & secrets. Optional when the PEM above also contains the certificate.",
+        "label": "Certificate Thumbprint",
+        "name": "certificate_thumbprint",
+        "required": false,
+        "type": "string"
+      },
+      {
+        "help_text": "Only if the private key in the PEM is encrypted.",
+        "label": "Private Key Password",
+        "name": "private_key_password",
+        "required": false,
         "type": "secret"
       }
     ],
@@ -2334,10 +2491,31 @@
         "type": "string"
       },
       {
-        "help_text": "The app registration needs the application permission DeviceManagementManagedDevices.Read.All, granted with admin consent.",
+        "help_text": "Leave empty when using a certificate (recommended). The app registration needs the application permission DeviceManagementManagedDevices.Read.All, granted with admin consent.",
         "label": "Client secret",
         "name": "client_secret",
-        "required": true,
+        "required": false,
+        "type": "secret"
+      },
+      {
+        "help_text": "Recommended over a client secret. Paste a PEM containing the PRIVATE KEY (and optionally the CERTIFICATE) for the certificate whose public .cer you uploaded under Entra portal > App registrations > your app > Certificates & secrets.",
+        "label": "Certificate PEM (private key)",
+        "name": "certificate_pem",
+        "required": false,
+        "type": "secret"
+      },
+      {
+        "help_text": "SHA-1 thumbprint shown next to the certificate under App registrations > Certificates & secrets. Optional when the PEM above also contains the certificate.",
+        "label": "Certificate Thumbprint",
+        "name": "certificate_thumbprint",
+        "required": false,
+        "type": "string"
+      },
+      {
+        "help_text": "Only if the private key in the PEM is encrypted.",
+        "label": "Private Key Password",
+        "name": "private_key_password",
+        "required": false,
         "type": "secret"
       }
     ]
@@ -2366,9 +2544,31 @@
         "type": "string"
       },
       {
+        "help_text": "Leave empty when using a certificate (recommended). Exactly one of secret or certificate is required.",
         "label": "Client Secret",
         "name": "client_secret",
-        "required": true,
+        "required": false,
+        "type": "secret"
+      },
+      {
+        "help_text": "Recommended over a client secret. Paste a PEM containing the PRIVATE KEY (and optionally the CERTIFICATE) for the certificate whose public .cer you uploaded under Entra portal > App registrations > your app > Certificates & secrets.",
+        "label": "Certificate PEM (private key)",
+        "name": "certificate_pem",
+        "required": false,
+        "type": "secret"
+      },
+      {
+        "help_text": "SHA-1 thumbprint shown next to the certificate under App registrations > Certificates & secrets. Optional when the PEM above also contains the certificate.",
+        "label": "Certificate Thumbprint",
+        "name": "certificate_thumbprint",
+        "required": false,
+        "type": "string"
+      },
+      {
+        "help_text": "Only if the private key in the PEM is encrypted.",
+        "label": "Private Key Password",
+        "name": "private_key_password",
+        "required": false,
         "type": "secret"
       },
       {

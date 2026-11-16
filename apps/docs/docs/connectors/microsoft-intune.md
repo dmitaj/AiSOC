@@ -20,10 +20,13 @@ Device owner, compliance state, OS version, encryption and threat-defence agent 
 |-------|-------|------|----------|---------|-------|
 | `tenant_id` | Directory (tenant) ID | string | yes | — | — |
 | `client_id` | Application (client) ID | string | yes | — | — |
-| `client_secret` | Client secret | secret | yes | — | **encrypted at rest** · The app registration needs the application permission DeviceManagementManagedDevices.Read.All, granted with admin consent. |
+| `client_secret` | Client secret | secret | no | — | **encrypted at rest** · Leave empty when using a certificate (recommended). The app registration needs the application permission DeviceManagementManagedDevices.Read.All, granted with admin consent. |
+| `certificate_pem` | Certificate PEM (private key) | secret | no | — | **encrypted at rest** · Recommended over a client secret. Paste a PEM containing the PRIVATE KEY (and optionally the CERTIFICATE) for the certificate whose public .cer you uploaded under Entra portal > App registrations > your app > Certificates & secrets. |
+| `certificate_thumbprint` | Certificate Thumbprint | string | no | — | SHA-1 thumbprint shown next to the certificate under App registrations > Certificates & secrets. Optional when the PEM above also contains the certificate. |
+| `private_key_password` | Private Key Password | secret | no | — | **encrypted at rest** · Only if the private key in the PEM is encrypted. |
 
 :::note Credential handling
-`client_secret` is encrypted at rest by the credential vault before the row is written, and decrypted only at poll time. The value is never logged and never returned by the API — a read of the saved connector shows the field as set, not its contents. See [credential vault](../operations/credentials.md).
+`client_secret`, `certificate_pem`, `private_key_password` are encrypted at rest by the credential vault before the row is written, and decrypted only at poll time. The value is never logged and never returned by the API — a read of the saved connector shows the field as set, not its contents. See [credential vault](../operations/credentials.md).
 :::
 
 ## Capabilities

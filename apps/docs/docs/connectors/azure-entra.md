@@ -57,6 +57,44 @@ You will need:
 3. Click **Test connection**. A successful test means Microsoft Graph accepted the client credentials and returned at least one page of audit logs.
 4. Click **Save**. The connector starts polling within ~30 seconds.
 
+## Certificate authentication (recommended)
+
+Instead of a client secret you can authenticate the app with a certificate. The private key never leaves AiSOC: it signs a short-lived assertion, and only that assertion is sent to Microsoft.
+
+1. Create a self-signed certificate and key:
+
+   ```bash
+   openssl req -x509 -newkey rsa:2048 -sha256 -days 730 -nodes -subj "/CN=AiSOC Entra Connector" -keyout aisoc.key -out aisoc.crt
+   ```
+
+2. In the Entra portal open **App registrations → your app → Certificates & secrets → Certificates → Upload certificate** and upload `aisoc.crt` (a `.cer`/`.crt`/`.pem` public certificate). Copy the **Thumbprint** shown next to it.
+3. In AiSOC paste `cat aisoc.key aisoc.crt` into **Certificate PEM (private key)** (the PEM must contain the `PRIVATE KEY` block; including the `CERTIFICATE` block too lets AiSOC derive the thumbprint itself). If you omit the certificate block, fill **Certificate Thumbprint**. Leave **Client Secret** empty. If the key is encrypted, set **Private Key Password**.
+
+Exactly one of secret or certificate must be configured; if both are set, the certificate is used. The key must be RSA. Existing secret-based instances keep working unchanged.
+
+### Let AiSOC generate the certificate (auto-rotated)
+
+Instead of running `openssl` yourself, click **Generate certificate** under **Certificate PEM (private key)** (in the add wizard, the edit dialog, or the OAuth panel's **Certificate** mode). AiSOC creates an RSA-2048 key and a self-signed SHA-256 certificate valid for 730 days. The private key stays in AiSOC, vault-encrypted; the console only receives the public certificate and shows its thumbprint, expiry and a **Download .cer** button.
+
+1. Fill in **Tenant ID** (the OAuth panel asks for it next to the button) and, optionally, the app's **Application object ID** from its **Overview** page.
+2. Click **Generate certificate**, then **Download .cer**.
+3. Upload it in Entra admin center → **App registrations → your app → Certificates & secrets → Certificates**.
+4. **Test connection** and **Save** as usual. Until you save, the generated key is held for 24 hours under a one-time id; an abandoned one simply expires. Pasting your own PEM remains available and is unaffected.
+
+`GET /api/v1/connectors/{id}/certificate.cer` (or `GET /api/v1/oauth/app/{connector_type}/certificate.cer` for the OAuth app) downloads the current public certificate again. No endpoint ever returns the key.
+
+**Auto-rotation.** Once a day the api service checks every certificate AiSOC generated; one that expires in less than **30 days** is rolled over through Microsoft Graph: AiSOC requests an app-only token with the current certificate, calls [`addKey`](https://learn.microsoft.com/graph/api/application-addkey) with a new certificate and a proof-of-possession token signed by the current key, confirms the new certificate can obtain a token (retrying for a few minutes while Entra replicates), switches to it, and then calls `removeKey` for the old certificate with a proof signed by the new key. An application needs no Graph permission to roll its own keys. The proof names the app by its **object id**: give it when generating, or AiSOC looks it up with `GET /applications(appId=…)`, which needs `Application.Read.All` (or `Directory.Read.All`). For the very first certificate you uploaded by hand, AiSOC can find its key id only through that same read; without it the old certificate is left in place and the connector card says so — delete it in the portal when convenient. Each successful rotation is written to the audit log (`connectors:certificate_rotate`).
+
+If a rotation fails before the switch, AiSOC keeps the old certificate, shows the error on the connector card ("Last auto-rotation failed: …"), writes a `connectors:certificate_rotation_failed` audit entry and an `ms_cert_rotation.alarm` error log line, marks the connector unhealthy once fewer than 7 days remain, and retries the next day. The connector card and edit dialog show **Certificate expires YYYY-MM-DD · auto-rotates**; a pasted certificate shows **expires YYYY-MM-DD — rotate manually** and is never touched.
+
+`addKey` can only be authorised by a certificate that is still valid. If every certificate on the app has expired (for example the api service was down for the whole 30-day window), AiSOC cannot recover on its own: generate a new certificate, upload the `.cer` manually and save.
+
+### One-click OAuth with a certificate
+
+The console's **Connect with Microsoft Entra ID via OAuth** panel can use the same certificate. Under **Register OAuth app**, switch **Client secret | Certificate** to **Certificate**, enter the app's **Client ID**, and paste the PEM (private key, ideally followed by the certificate). The thumbprint field is only needed when the PEM has no `CERTIFICATE` block, and the password field only when the key is encrypted; the key is re-stored unencrypted inside the credential vault, so the password is never kept. The PEM is validated on save (an unreadable or non-RSA key, or a bad thumbprint, is rejected with a 422) and is never shown again — the panel only reports that a certificate is registered.
+
+The authorization-code exchange and every background token refresh then authenticate with an RS256 `client_assertion` (`x5t`, plus `x5t#S256` when the certificate is present) instead of `client_secret`. The certificate option appears only for Microsoft identity platform apps (token endpoint on `login.microsoftonline.com` / `login.microsoft.com`); other OAuth providers accept a client secret only.
+
 ## Polling details
 
 - Default interval: **300 seconds**. Override via `connector_config.poll_interval_seconds`.
@@ -137,10 +175,13 @@ Nothing here is keyed by list position. A rule asking for the group gets the gro
 |-------|-------|------|----------|---------|-------|
 | `tenant_id` | Tenant ID | string | yes | — | — |
 | `client_id` | Application (Client) ID | string | yes | — | — |
-| `client_secret` | Client Secret | secret | yes | — | **encrypted at rest** |
+| `client_secret` | Client Secret | secret | no | — | **encrypted at rest** · Leave empty when using a certificate (recommended). Exactly one of secret or certificate is required. |
+| `certificate_pem` | Certificate PEM (private key) | secret | no | — | **encrypted at rest** · Recommended over a client secret. Paste a PEM containing the PRIVATE KEY (and optionally the CERTIFICATE) for the certificate whose public .cer you uploaded under Entra portal > App registrations > your app > Certificates & secrets. |
+| `certificate_thumbprint` | Certificate Thumbprint | string | no | — | SHA-1 thumbprint shown next to the certificate under App registrations > Certificates & secrets. Optional when the PEM above also contains the certificate. |
+| `private_key_password` | Private Key Password | secret | no | — | **encrypted at rest** · Only if the private key in the PEM is encrypted. |
 
 :::note Credential handling
-`client_secret` is encrypted at rest by the credential vault before the row is written, and decrypted only at poll time. The value is never logged and never returned by the API. See [credential vault](../operations/credentials.md).
+`client_secret`, `certificate_pem`, `private_key_password` are encrypted at rest by the credential vault before the row is written, and decrypted only at poll time. The value is never logged and never returned by the API. See [credential vault](../operations/credentials.md).
 :::
 
 <!-- END GENERATED FIELD REFERENCE -->

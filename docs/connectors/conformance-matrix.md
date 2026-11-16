@@ -6,7 +6,7 @@
 > async coroutines, valid capabilities, secret fields marked `secret`).
 > Live-vendor sandbox smoke is a separate wave; this gates the contract.
 
-**96 / 96 connectors conform** to the runtime contract.
+**97 / 97 connectors conform** to the runtime contract.
 
 | connector | category | fields | vaulted | caps | test_connection | fetch_alerts | normalize |
 |-----------|----------|-------:|--------:|-----:|:---------------:|:------------:|:---------:|
@@ -19,10 +19,10 @@
 | aws_guardduty | cloud | 3 | 1 | 1 | ✅ | ✅ | ✅ |
 | aws_security_hub | cloud | 3 | 1 | 3 | ✅ | ✅ | ✅ |
 | aws_vpc_flow | cloud | 6 | 1 | 2 | ✅ | ✅ | ✅ |
-| azure_activity | cloud | 4 | 1 | 1 | ✅ | ✅ | ✅ |
-| azure_defender | edr | 3 | 1 | 5 | ✅ | ✅ | ✅ |
-| azure_entra | iam | 3 | 1 | 2 | ✅ | ✅ | ✅ |
-| azure_event_hubs | cloud | 6 | 1 | 2 | ✅ | ✅ | ✅ |
+| azure_activity | cloud | 7 | 3 | 1 | ✅ | ✅ | ✅ |
+| azure_defender | edr | 6 | 3 | 5 | ✅ | ✅ | ✅ |
+| azure_entra | iam | 6 | 3 | 2 | ✅ | ✅ | ✅ |
+| azure_event_hubs | cloud | 9 | 3 | 2 | ✅ | ✅ | ✅ |
 | bamboohr | hr | 3 | 1 | 1 | ✅ | ✅ | — |
 | box | saas | 1 | 1 | 3 | ✅ | ✅ | ✅ |
 | carbon_black | edr | 4 | 1 | 6 | ✅ | ✅ | ✅ |
@@ -34,6 +34,7 @@
 | confluence_audit | saas | 3 | 1 | 2 | ✅ | ✅ | ✅ |
 | cortex_xdr | edr | 3 | 2 | 3 | ✅ | ✅ | ✅ |
 | cortex_xsiam | siem | 3 | 2 | 5 | ✅ | ✅ | ✅ |
+| crowdsec | network | 5 | 2 | 1 | ✅ | ✅ | ✅ |
 | crowdstrike | edr | 3 | 1 | 6 | ✅ | ✅ | ✅ |
 | darktrace | ndr | 4 | 2 | 3 | ✅ | ✅ | ✅ |
 | datadog | siem | 5 | 2 | 4 | ✅ | ✅ | ✅ |
@@ -62,9 +63,9 @@
 | kubernetes_audit | cloud | 5 | 1 | 2 | ✅ | ✅ | ✅ |
 | lacework | cloud | 4 | 1 | 5 | ✅ | ✅ | ✅ |
 | llm_usage | saas | 4 | 1 | 2 | ✅ | ✅ | ✅ |
-| m365_audit | saas | 3 | 1 | 1 | ✅ | ✅ | ✅ |
-| microsoft_intune | mdm | 3 | 1 | 1 | ✅ | ✅ | — |
-| microsoft_sentinel | siem | 6 | 1 | 2 | ✅ | ✅ | ✅ |
+| m365_audit | saas | 6 | 3 | 1 | ✅ | ✅ | ✅ |
+| microsoft_intune | mdm | 6 | 3 | 1 | ✅ | ✅ | — |
+| microsoft_sentinel | siem | 9 | 3 | 2 | ✅ | ✅ | ✅ |
 | mimecast | saas | 3 | 1 | 4 | ✅ | ✅ | ✅ |
 | netskope | network | 3 | 1 | 3 | ✅ | ✅ | ✅ |
 | oci | cloud | 6 | 1 | 3 | ✅ | ✅ | ✅ |

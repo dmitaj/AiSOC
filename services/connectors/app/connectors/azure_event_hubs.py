@@ -78,6 +78,7 @@ from app.connectors.base import (
     Field,
     OAuthHints,
 )
+from app.connectors.ms_cert_auth import build_credential, cert_schema_fields, token_form
 
 logger = structlog.get_logger()
 
@@ -249,7 +250,14 @@ class AzureEventHubsConnector(BaseConnector):
             fields=[
                 Field("tenant_id", "string", "Entra tenant ID", placeholder="00000000-0000-0000-0000-000000000000"),
                 Field("client_id", "string", "Application (client) ID"),
-                Field("client_secret", "secret", "Client secret"),
+                Field(
+                    "client_secret",
+                    "secret",
+                    "Client Secret",
+                    required=False,
+                    help_text="Leave empty when using a certificate (recommended). Exactly one of secret or certificate is required.",
+                ),
+                *cert_schema_fields(Field),
                 Field(
                     "storage_account",
                     "string",
@@ -291,14 +299,18 @@ class AzureEventHubsConnector(BaseConnector):
         self,
         tenant_id: str,
         client_id: str,
-        client_secret: str,
         storage_account: str,
         container: str,
         prefix: str = "",
+        client_secret: str = "",
+        certificate_pem: str = "",
+        certificate_thumbprint: str = "",
+        private_key_password: str = "",
     ):
         self._tenant_id = tenant_id
         self._client_id = client_id
         self._client_secret = client_secret
+        self._cert = build_credential(client_secret, certificate_pem, certificate_thumbprint, private_key_password)
         self._account = storage_account
         self._container = container
         self._prefix = (prefix or "").strip().strip("/")
@@ -315,8 +327,7 @@ class AzureEventHubsConnector(BaseConnector):
             _TOKEN_URL.format(tenant_id=self._tenant_id),
             data={
                 "grant_type": "client_credentials",
-                "client_id": self._client_id,
-                "client_secret": self._client_secret,
+                **token_form(self._cert, self._client_id, self._client_secret, _TOKEN_URL.format(tenant_id=self._tenant_id)),
                 "scope": _STORAGE_SCOPE,
             },
         )
